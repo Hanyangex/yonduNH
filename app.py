@@ -11,7 +11,7 @@ st.set_page_config(
 )
 
 st.title("🚌 한양고속 차량 자산 및 정기검사 관리 시스템")
-st.caption("보유 차량의 최초등록일 기준 차령만료일 자동 연산 및 정기검사 만료 임박 알림을 제공합니다.")
+st.caption("보유 차량의 차령만료일 및 정기검사 기간(전 3개월 ~ 후 1개월) 임박 알림을 제공합니다.")
 
 st.markdown("---")
 
@@ -20,7 +20,7 @@ st.markdown("---")
 # ==========================================
 st.sidebar.header("⚙️ 차령 및 검사 관리 설정")
 legal_limit_years = st.sidebar.number_input("법정 기본 차령 (년)", min_value=1, max_value=15, value=10)
-inspection_warning_days = st.sidebar.number_input("정기검사 임박 기준 (일)", min_value=7, max_value=90, value=30)
+age_warning_days = st.sidebar.number_input("차령만료 임박 기준 (일)", min_value=30, max_value=365, value=180)
 
 st.sidebar.markdown("---")
 
@@ -30,12 +30,12 @@ if st.sidebar.button("🔄 저장된 데이터 초기화"):
         del st.session_state["bus_data"]
     st.sidebar.success("데이터가 기본값으로 초기화되었습니다.")
 
-st.sidebar.info("💡 **차령 상태 분류 기준**\n- **대폐차 대상**: 잔여 차령 1년 이하\n- **정기점검 필요**: 잔여 차령 2~3년\n- **양호**: 잔여 차령 4년 이상")
+st.sidebar.info("💡 **정기검사 기준**\n- 검사 가능/임박: 만료일 전 90일(3개월) ~ 후 30일(1개월)\n- 검사 초과: 만료일 후 30일 경과")
 
 # ==========================================
 # 2. 차량 자산 파일 업로드 및 자동 계산 함수
 # ==========================================
-def calculate_bus_asset(df, max_years, alert_days):
+def calculate_bus_asset(df, max_years, age_alert_days):
     required_cols = {"차량번호", "차종", "담당 노선", "최초등록일", "정기검사유효일자"}
     if not required_cols.issubset(set(df.columns)):
         return None, f"엑셀 파일에 다음 필수 열이 포함되어야 합니다: {', '.join(required_cols)}"
@@ -49,31 +49,34 @@ def calculate_bus_asset(df, max_years, alert_days):
 
     # 1. 차령만료일 자동 계산 (최초등록일 + 법정 차령 년수)
     df["차령만료일"] = df["최초등록일"].apply(lambda d: pd.Timestamp(year=d.year + max_years, month=d.month, day=d.day))
+    df["차령 남은일수"] = (df["차령만료일"] - today).dt.days
 
-    # 2. 잔여 차령 계산
-    df["잔여 차령(년)"] = df["최초등록일"].apply(lambda d: max(0, max_years - (current_year - d.year)))
-    
-    # 3. 차령 상태 자동 분류
-    def get_status(remaining_years):
-        if remaining_years <= 1:
-            return "대폐차 대상"
-        elif remaining_years <= 3:
-            return "정기점검 필요"
+    # 차령 만료 상태
+    def get_age_status(days):
+        if days < 0:
+            return "차령 만료"
+        elif days <= age_alert_days:
+            return "차령 임박"
         else:
             return "양호"
 
-    df["상태"] = df["잔여 차령(년)"].apply(get_status)
+    df["차령 상태"] = df["차령 남은일수"].apply(get_age_status)
 
-    # 4. 정기검사 남은 일수(D-Day) 및 상태 계산
+    # 2. 잔여 차령 계산 (년 단위)
+    df["잔여 차령(년)"] = df["최초등록일"].apply(lambda d: max(0, max_years - (current_year - d.year)))
+
+    # 3. 정기검사 기간 및 상태 계산 (기준일 기준 앞 3개월(-90일), 뒤 1개월(+30일))
+    # days_diff = 유효일자 - 오늘
+    # positive: 검사 유효일자 전 / negative: 검사 유효일자 후
     df["검사 남은일수"] = (df["정기검사유효일자"] - today).dt.days
 
-    def get_inspection_status(days):
-        if days < 0:
-            return "검사 초과"
-        elif days <= alert_days:
-            return "검사 임박"
+    def get_inspection_status(days_diff):
+        if days_diff < -30:
+            return "검사 초과"  # 뒤 1개월(30일) 초과
+        elif -30 <= days_diff <= 90:
+            return "검사 임박"  # 앞 3개월(90일) ~ 뒤 1개월(30일) 사이
         else:
-            return "검사 여유"
+            return "검사 여유"  # 90일 이상 남음
 
     df["정기검사 상태"] = df["검사 남은일수"].apply(get_inspection_status)
 
@@ -132,11 +135,10 @@ if uploaded_file is not None:
         else:
             raw_df = pd.read_excel(uploaded_file)
 
-        processed_df, err_msg = calculate_bus_asset(raw_df, legal_limit_years, inspection_warning_days)
+        processed_df, err_msg = calculate_bus_asset(raw_df, legal_limit_years, age_warning_days)
         if err_msg:
             st.error(err_msg)
         else:
-            # 세션에 최신 업로드 데이터 저장
             st.session_state["bus_data"] = processed_df
             st.success(f"총 {len(processed_df)}대의 차량 데이터가 세션에 저장되었습니다!")
     except Exception as e:
@@ -144,41 +146,65 @@ if uploaded_file is not None:
 
 # 세션 데이터가 없는 경우 기본 데이터 로드
 if "bus_data" not in st.session_state:
-    st.session_state["bus_data"], _ = calculate_bus_asset(default_bus_df, legal_limit_years, inspection_warning_days)
+    st.session_state["bus_data"], _ = calculate_bus_asset(default_bus_df, legal_limit_years, age_warning_days)
 
 bus_data = st.session_state["bus_data"]
 
 st.markdown("---")
 
 # ==========================================
-# 4. 정기검사 알림 카드
+# 4. 차령만료 및 정기검사 알림 카드
 # ==========================================
-st.subheader("🔔 2. 정기검사 임박 / 초과 알림 카드")
+col_card1, col_card2 = st.columns(2)
 
-urgent_inspections = bus_data[bus_data["정기검사 상태"].isin(["검사 초과", "검사 임박"])].sort_values("검사 남은일수")
+# --- 4-1. 차령만료 임박 카드 ---
+with col_card1:
+    st.subheader("🚌 차령만료 임박 / 만료 알림")
+    urgent_ages = bus_data[bus_data["차령 상태"].isin(["차령 만료", "차령 임박"])].sort_values("차령 남은일수")
 
-if urgent_inspections.empty:
-    st.success("✅ 현재 정기검사가 임박하거나 초과된 차량이 없습니다.")
-else:
-    cols = st.columns(3)
-    for idx, (_, row) in enumerate(urgent_inspections.iterrows()):
-        col = cols[idx % 3]
-        days = row["검사 남은일수"]
-        
-        with col:
+    if urgent_ages.empty:
+        st.success("✅ 차령만료가 임박하거나 초과된 차량이 없습니다.")
+    else:
+        for _, row in urgent_ages.iterrows():
+            days = row["차령 남은일수"]
             if days < 0:
                 st.error(
-                    f"🚨 **[검사 기한 초과] {row['차량번호']}**\n\n"
+                    f"🚨 **[차령 만료] {row['차량번호']}**\n\n"
                     f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
-                    f"- **검사유효일자**: {row['정기검사유효일자']}\n"
-                    f"- **상태**: {abs(days)}일 초과됨"
+                    f"- **차령만료일**: {row['차령만료일']}\n"
+                    f"- **상태**: 만료일 {abs(days)}일 경과"
                 )
             else:
                 st.warning(
-                    f"⚠️ **[검사 임박] {row['차량번호']}**\n\n"
+                    f"⚠️ **[차령 임박] {row['차량번호']}**\n\n"
                     f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
-                    f"- **검사유효일자**: {row['정기검사유효일자']}\n"
+                    f"- **차령만료일**: {row['차령만료일']}\n"
                     f"- **상태**: D-{days}일 남음"
+                )
+
+# --- 4-2. 정기검사 임박 카드 ---
+with col_card2:
+    st.subheader("🔔 정기검사 임박 / 초과 알림 (전 3개월 ~ 후 1개월)")
+    urgent_inspections = bus_data[bus_data["정기검사 상태"].isin(["검사 초과", "검사 임박"])].sort_values("검사 남은일수")
+
+    if urgent_inspections.empty:
+        st.success("✅ 정기검사가 임박하거나 초과된 차량이 없습니다.")
+    else:
+        for _, row in urgent_inspections.iterrows():
+            days = row["검사 남은일수"]
+            if days < -30:
+                st.error(
+                    f"🚨 **[검사기한 초과] {row['차량번호']}**\n\n"
+                    f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
+                    f"- **유효일자**: {row['정기검사유효일자']}\n"
+                    f"- **상태**: 허용기간(후 1개월) {abs(days) - 30}일 초과"
+                )
+            else:
+                st.warning(
+                    f"⚠️ **[검사기간 연장/임박] {row['차량번호']}**\n\n"
+                    f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
+                    f"- **유효일자**: {row['정기검사유효일자']}\n"
+                    f"- **상태**: 기준일 기준 D{'-' if days >= 0 else '+'}{abs(days)}일"
                 )
 
 st.markdown("---")
@@ -186,33 +212,33 @@ st.markdown("---")
 # ==========================================
 # 5. 차량 자산 현황 요약
 # ==========================================
-st.subheader("📊 3. 보유 자산 및 검사 현황 요약")
+st.subheader("📊 3. 보유 자산 현황 요약")
 
 total_count = len(bus_data)
-replace_count = len(bus_data[bus_data["상태"] == "대폐차 대상"])
+age_urgent_count = len(urgent_ages)
 inspection_urgent_count = len(urgent_inspections)
-good_count = len(bus_data[(bus_data["상태"] == "양호") & (bus_data["정기검사 상태"] == "검사 여유")])
+good_count = len(bus_data[(bus_data["차령 상태"] == "양호") & (bus_data["정기검사 상태"] == "검사 여유")])
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("총 보유 차량", f"{total_count} 대")
-m2.metric("대폐차 대상 차량", f"{replace_count} 대", delta_color="inverse")
-m3.metric("검사 임박/초과 차량", f"{inspection_urgent_count} 대", delta=f"{inspection_warning_days}일 이내", delta_color="inverse")
+m2.metric("차령만료 임박/만료", f"{age_urgent_count} 대", delta_color="inverse")
+m3.metric("검사 임박/초과 차량", f"{inspection_urgent_count} 대", delta_color="inverse")
 m4.metric("양호 및 정상 차량", f"{good_count} 대")
 
 st.markdown("---")
 
 # ==========================================
-# 6. 상세 차량 목록 조회 및 필터링 (차령만료일 포함)
+# 6. 상세 차량 목록 조회 및 필터링
 # ==========================================
-st.subheader("📋 4. 상세 차량 목록 조회 (차령만료일 연산 반영)")
+st.subheader("📋 4. 상세 차량 목록 조회")
 
 filter_col1, filter_col2, filter_col3 = st.columns([1, 1, 2])
 
 with filter_col1:
     status_filter = st.multiselect(
         "차령 상태",
-        options=["대폐차 대상", "정기점검 필요", "양호"],
-        default=["대폐차 대상", "정기점검 필요", "양호"]
+        options=["차령 만료", "차령 임박", "양호"],
+        default=["차령 만료", "차령 임박", "양호"]
     )
 
 with filter_col2:
@@ -227,7 +253,7 @@ with filter_col3:
 
 # 필터링 적용
 filtered_df = bus_data[
-    bus_data["상태"].isin(status_filter) &
+    bus_data["차령 상태"].isin(status_filter) &
     bus_data["정기검사 상태"].isin(inspection_filter)
 ]
 
@@ -239,5 +265,5 @@ if search_term:
     ]
 
 # 주요 열 순서 정리
-display_cols = ["차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "잔여 차령(년)", "상태", "정기검사유효일자", "정기검사 상태"]
+display_cols = ["차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "차령 상태", "정기검사유효일자", "정기검사 상태"]
 st.dataframe(filtered_df[display_cols], use_container_width=True)

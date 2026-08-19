@@ -3,9 +3,9 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 import io
-import os  # [수정] 파일 존재 여부 확인 및 파일 삭제를 위해 추가
+import os
 
-# 0. 데이터 저장 파일 경로 설정 [수정]
+# 0. 데이터 저장 파일 경로 설정
 DATA_FILE = "saved_bus_data.csv"
 
 # 1. 페이지 기본 설정
@@ -23,44 +23,40 @@ st.markdown("---")
 # 1. 사이드바 - 설정 및 데이터 관리
 # ==========================================
 st.sidebar.header("⚙️ 차령 및 검사 관리 설정")
-legal_limit_years = st.sidebar.number_input("법정 기본 차령 (년)", min_value=1, max_value=15, value=10)
 age_warning_days = st.sidebar.number_input("차령만료 임박 기준 (일)", min_value=30, max_value=365, value=180)
 
 st.sidebar.markdown("---")
 
-# 데이터 초기화 버튼 [수정]
+# 데이터 초기화 버튼
 if st.sidebar.button("🔄 저장된 데이터 초기화"):
-    # 로컬에 저장된 CSV 파일 삭제
     if os.path.exists(DATA_FILE):
         os.remove(DATA_FILE)
-    # 세션 상태 초기화
     if "bus_data" in st.session_state:
         del st.session_state["bus_data"]
     st.sidebar.success("저장된 데이터가 삭제되고 기본값으로 초기화되었습니다.")
-    st.rerun()  # 화면 새로고침
+    st.rerun()
 
 st.sidebar.info("💡 **정기검사 기준**\n- 검사 가능/임박: 만료일 전 90일(3개월) ~ 후 30일(1개월)\n- 검사 초과: 만료일 후 30일 경과")
 
 # ==========================================
-# 2. 차량 자산 파일 업로드 및 자동 계산 함수
+# 2. 차량 자산 파일 업로드 및 검사 계산 함수
 # ==========================================
-def calculate_bus_asset(df, max_years, age_alert_days):
-    required_cols = {"차량번호", "차종", "담당 노선", "최초등록일", "정기검사유효일자"}
+def calculate_bus_asset(df, age_alert_days):
+    # 필수 열에 '차령만료일' 추가 [수정]
+    required_cols = {"차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "정기검사유효일자"}
     if not required_cols.issubset(set(df.columns)):
         return None, f"엑셀 파일에 다음 필수 열이 포함되어야 합니다: {', '.join(required_cols)}"
 
-    # 데이터 타입 복사 및 포맷 정리
     df = df.copy()
     
     # 날짜 데이터 변환
     df["최초등록일"] = pd.to_datetime(df["최초등록일"])
+    df["차령만료일"] = pd.to_datetime(df["차령만료일"])  # [수정] 직접 데이터에서 로드
     df["정기검사유효일자"] = pd.to_datetime(df["정기검사유효일자"])
     
     today = datetime.now()
-    current_year = today.year
 
-    # 1. 차령만료일 자동 계산 (최초등록일 + 법정 차령 년수)
-    df["차령만료일"] = df["최초등록일"].apply(lambda d: pd.Timestamp(year=d.year + max_years, month=d.month, day=d.day))
+    # 1. 차령만료 남은 일수 계산 (직접 넣은 차령만료일 기준) [수정]
     df["차령 남은일수"] = (df["차령만료일"] - today).dt.days
 
     # 차령 만료 상태
@@ -74,19 +70,16 @@ def calculate_bus_asset(df, max_years, age_alert_days):
 
     df["차령 상태"] = df["차령 남은일수"].apply(get_age_status)
 
-    # 2. 잔여 차령 계산 (년 단위)
-    df["잔여 차령(년)"] = df["최초등록일"].apply(lambda d: max(0, max_years - (current_year - d.year)))
-
-    # 3. 정기검사 기간 및 상태 계산 (기준일 기준 앞 3개월(-90일), 뒤 1개월(+30일))
+    # 2. 정기검사 기간 및 상태 계산
     df["검사 남은일수"] = (df["정기검사유효일자"] - today).dt.days
 
     def get_inspection_status(days_diff):
         if days_diff < -30:
-            return "검사 초과"  # 뒤 1개월(30일) 초과
+            return "검사 초과"
         elif -30 <= days_diff <= 90:
-            return "검사 임박"  # 앞 3개월(90일) ~ 뒤 1개월(30일) 사이
+            return "검사 임박"
         else:
-            return "검사 여유"  # 90일 이상 남음
+            return "검사 여유"
 
     df["정기검사 상태"] = df["검사 남은일수"].apply(get_inspection_status)
 
@@ -97,17 +90,18 @@ def calculate_bus_asset(df, max_years, age_alert_days):
 
     return df, None
 
-# 기본 샘플 데이터
+# 기본 샘플 데이터 (차령만료일 직접 포함) [수정]
 default_bus_df = pd.DataFrame({
     "차량번호": ["경기70아 1001", "경기70아 1002", "경기70아 1003", "경기70아 1004", "경기70아 1005", "경기70아 1006"],
     "차종": ["유니버스 익스프레스", "그랜버드 실크로드", "유니버스 노블", "그랜버드 이노베이션", "유니버스 노블", "그랜버드 실크로드"],
     "담당 노선": ["서울 - 부산", "서울 - 광주", "서울 - 대구", "서울 - 대전", "서울 - 전주", "서울 - 당진"],
     "최초등록일": ["2017-03-15", "2018-08-20", "2020-11-10", "2022-05-01", "2024-01-15", "2016-09-01"],
+    "차령만료일": ["2027-03-15", "2028-08-20", "2030-11-10", "2032-05-01", "2034-01-15", "2026-09-01"],
     "정기검사유효일자": ["2026-08-25", "2026-09-10", "2026-08-10", "2026-11-30", "2027-01-15", "2026-09-02"]
 })
 
 # ==========================================
-# 3. 엑셀 업로드 및 영구 데이터 저장 처리 [수정]
+# 3. 엑셀 업로드 및 영구 데이터 저장 처리
 # ==========================================
 st.subheader("📂 1. 차량목록 엑셀 업로드 및 자동 저장")
 
@@ -117,11 +111,13 @@ with col_up1:
     uploaded_file = st.file_uploader("차량목록 엑셀(.xlsx) 또는 CSV(.csv) 파일을 업로드하세요", type=["xlsx", "csv"])
 
 with col_up2:
+    # 샘플 다운로드 양식에 차령만료일 열 추가 [수정]
     sample_df = pd.DataFrame({
         "차량번호": ["충남70아 1001", "충남70아 1002", "충남70아 1003"],
         "차종": ["유니버스 노블", "그랜버드 이노베이션", "유니버스 익스프레스"],
         "담당 노선": ["서울 - 태안", "서울 - 서산", "서울 - 당진"],
         "최초등록일": ["2016-05-10", "2021-03-15", "2024-02-01"],
+        "차령만료일": ["2026-05-10", "2031-03-15", "2034-02-01"],
         "정기검사유효일자": ["2026-09-01", "2026-10-15", "2027-03-20"]
     })
     sample_buffer = io.BytesIO()
@@ -137,7 +133,7 @@ with col_up2:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# 1) 파일 업로드 발생 시 -> 로컬 데이터 파일(saved_bus_data.csv)로 저장 [수정]
+# 1) 파일 업로드 발생 시 -> 로컬 데이터 파일 저장
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith(".csv"):
@@ -145,25 +141,21 @@ if uploaded_file is not None:
         else:
             raw_df = pd.read_excel(uploaded_file)
 
-        # 유효성 검사
-        _, err_msg = calculate_bus_asset(raw_df, legal_limit_years, age_warning_days)
+        _, err_msg = calculate_bus_asset(raw_df, age_warning_days)
         if err_msg:
             st.error(err_msg)
         else:
-            # 원본 데이터를 CSV로 저장하여 사이트에 데이터 보존
             raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
             st.success(f"총 {len(raw_df)}대의 차량 데이터가 사이트(서버)에 영구 저장되었습니다!")
     except Exception as e:
         st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
-# 2) 저장된 데이터를 불러오거나 기본 데이터 로드 [수정]
+# 2) 저장된 데이터를 불러오거나 기본 데이터 로드
 if os.path.exists(DATA_FILE):
-    # 이전에 저장된 파일이 있는 경우 읽기
     current_raw_df = pd.read_csv(DATA_FILE)
-    bus_data, _ = calculate_bus_asset(current_raw_df, legal_limit_years, age_warning_days)
+    bus_data, _ = calculate_bus_asset(current_raw_df, age_warning_days)
 else:
-    # 저장된 파일이 없는 경우 기본 데이터 사용
-    bus_data, _ = calculate_bus_asset(default_bus_df, legal_limit_years, age_warning_days)
+    bus_data, _ = calculate_bus_asset(default_bus_df, age_warning_days)
 
 st.session_state["bus_data"] = bus_data
 

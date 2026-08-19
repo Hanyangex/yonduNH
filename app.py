@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
+import io
 
 # 1. 페이지 기본 설정
 st.set_page_config(
@@ -76,7 +78,45 @@ rev_yoy_growth = ((total_revenue - last_year_rev) / last_year_rev * 100) if last
 net_yoy_growth = ((estimated_net_income - last_year_net) / last_year_net * 100) if last_year_net > 0 else 0
 
 # ==========================================
-# 3. 차량 자산 현황 mock 데이터 및 진단
+# 3. [개선] 보유 버스 자산 파일 업로드 및 자동 계산 함수
+# ==========================================
+def calculate_bus_asset(df):
+    # 필수 컬럼 검증
+    required_cols = {"차량번호", "차종", "담당 노선", "최초등록일"}
+    if not required_cols.issubset(set(df.columns)):
+        return None, f"엑셀 파일에 다음 필수 열이 포함되어야 합니다: {', '.join(required_cols)}"
+
+    # 날짜 형식을 datetime으로 변환
+    df["최초등록일"] = pd.to_datetime(df["최초등록일"])
+    current_year = datetime.now().year
+
+    # 잔여 차령 자동 계산 (기본 법정 차령 10년 기준)
+    df["잔여 차령(년)"] = df["최초등록일"].apply(lambda d: max(0, 10 - (current_year - d.year)))
+    
+    # 상태 자동 계산 함수
+    def get_status(remaining_years):
+        if remaining_years <= 1:
+            return "대폐차 대상"
+        elif remaining_years <= 3:
+            return "정기점검 필요"
+        else:
+            return "양호"
+
+    df["상태"] = df["잔여 차령(년)"].apply(get_status)
+    df["최초등록일"] = df["최초등록일"].dt.strftime("%Y-%m-%d")
+    return df, None
+
+# 기본 가상 데이터 (업로드 전 표출용)
+default_bus_df = pd.DataFrame({
+    "차량번호": ["경기70아 1001", "경기70아 1002", "경기70아 1003", "경기70아 1004", "경기70아 1005"],
+    "차종": ["유니버스 익스프레스", "그랜버드 실크로드", "유니버스 노블", "그랜버드 이노베이션", "유니버스 노블"],
+    "담당 노선": ["서울 - 부산", "서울 - 광주", "서울 - 대구", "서울 - 대전", "서울 - 전주"],
+    "최초등록일": ["2017-03-15", "2018-08-20", "2020-11-10", "2022-05-01", "2024-01-15"]
+})
+bus_data, _ = calculate_bus_asset(default_bus_df)
+
+# ==========================================
+# 4. 리스크 알림 대시보드
 # ==========================================
 st.subheader("🚨 보유 버스 자산 상태 및 운행 리스크 알림")
 
@@ -88,10 +128,10 @@ with alert_cols[0]:
         st.success(f"✅ **기타노선 흑자 유지**: 기타 부문 순이익 {other_profit:,.0f}원")
 
 with alert_cols[1]:
-    # 임의 차령 초과 차량 수 설정 (경영 위험 알림)
-    aging_buses = 4 
+    # 자동 계산된 대폐차 대상 차량 수 연동
+    aging_buses = len(bus_data[bus_data["상태"] == "대폐차 대상"])
     if aging_buses > 0:
-        st.warning(f"🚍 **차령 만료 예정 차량**: 차령(법정 내구연한) 만료 임박 버스가 **{aging_buses}대** 존재합니다.")
+        st.warning(f"🚍 **차령 만료 예정 차량**: 대폐차 대상 버스가 **{aging_buses}대** 존재합니다.")
     else:
         st.success("✅ **차량 자산 양호**: 차령 만료 임박 버스 없음")
 
@@ -105,7 +145,7 @@ with alert_cols[2]:
 st.markdown("---")
 
 # ==========================================
-# 4. 연말 운송손익 추정 대시보드
+# 5. 연말 운송손익 추정 대시보드
 # ==========================================
 st.subheader("📊 1. 연말 운송손익 및 경영 대시보드")
 
@@ -140,7 +180,7 @@ with col2:
 st.markdown("---")
 
 # ==========================================
-# 5. 손익분기점(BEP) 분석
+# 6. 손익분기점(BEP) 분석
 # ==========================================
 st.subheader("⚖️ 2. 손익분기점(BEP) 및 운행 원가 분석")
 
@@ -169,25 +209,55 @@ with bep_col2:
 st.markdown("---")
 
 # ==========================================
-# 6. 보유 버스 자산 목록 관리 (추가 기능)
+# 7. [신규] 보유 버스 자산 엑셀 업로드 및 자동 계산
 # ==========================================
-st.subheader("🚌 3. 보유 버스 자산 현황 관리")
+st.subheader("🚌 3. 보유 버스 자산 현황 관리 (엑셀 업로드)")
 
-bus_data = pd.DataFrame({
-    "차량번호": ["경기70아 1001", "경기70아 1002", "경기70아 1003", "경기70아 1004", "경기70아 1005"],
-    "차종": ["유니버스 익스프레스", "그랜버드 실크로드", "유니버스 노블", "그랜버드 이노베이션", "유니버스 노블"],
-    "담당 노선": ["서울 - 부산", "서울 - 광주", "서울 - 대구", "서울 - 대전", "서울 - 전주"],
-    "최초등록일": ["2016-03-15", "2017-08-20", "2019-11-10", "2021-05-01", "2023-01-15"],
-    "잔여 차령(년)": [1, 2, 4, 6, 8],
-    "상태": ["대폐차 대상", "정기점검 필요", "양호", "양호", "양호"]
+# 샘플 양식 다운로드 제공
+sample_df = pd.DataFrame({
+    "차량번호": ["충남70아 1001", "충남70아 1002", "충남70아 1003"],
+    "차종": ["유니버스 노블", "그랜버드 이노베이션", "유니버스 익스프레스"],
+    "담당 노선": ["서울 - 태안", "서울 - 서산", "서울 - 당진"],
+    "최초등록일": ["2016-05-10", "2021-03-15", "2024-02-01"]
 })
 
+sample_buffer = io.BytesIO()
+with pd.ExcelWriter(sample_buffer, engine='openpyxl') as writer:
+    sample_df.to_excel(writer, index=False)
+
+st.download_button(
+    label="📥 차량목록 샘플 양식 다운로드",
+    data=sample_buffer.getvalue(),
+    file_name="차량목록_샘플.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
+
+uploaded_file = st.file_uploader("차량목록 엑셀 또는 CSV 파일을 업로드하세요", type=["xlsx", "csv"])
+
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.endswith(".csv"):
+            df_uploaded = pd.read_csv(uploaded_file)
+        else:
+            df_uploaded = pd.read_excel(uploaded_file)
+
+        processed_df, err_msg = calculate_bus_asset(df_uploaded)
+
+        if err_msg:
+            st.error(err_msg)
+        else:
+            bus_data = processed_df
+            st.success(f"총 {len(bus_data)}대의 차량 데이터가 업로드 및 자동 계산되었습니다!")
+    except Exception as e:
+        st.error(f"파일을 읽는 중 오류가 발생했습니다: {e}")
+
+# 최종 차량 목록 표시
 st.dataframe(bus_data, use_container_width=True)
 
 st.markdown("---")
 
 # ==========================================
-# 7. 임원 보고용 요약 리포트
+# 8. 임원 보고용 요약 리포트
 # ==========================================
 st.subheader("📑 4. 이사회 및 경영진 제출용 요약서")
 
@@ -231,6 +301,7 @@ report_html = f"""
         <li><b>추정 당기순이익:</b> <span style="color:red; font-weight:bold;">{estimated_net_income:,.0f} 원</span> (전년 대비 {net_yoy_growth:+.1f}%)</li>
         <li><b>손익분기점(BEP) 필요수입:</b> {bep_revenue:,.0f} 원 (안전율 {safety_margin_ratio:.1f}%)</li>
         <li><b>차량 대폐차 충당금 설정액 ({depreciation_rate*100:.1f}%):</b> {depreciation_amount:,.0f} 원</li>
+        <li><b>보유 차량 수:</b> 총 {len(bus_data)}대 (대폐차 대상: {len(bus_data[bus_data["상태"] == "대폐차 대상"])}대)</li>
     </ul>
 </div>
 """

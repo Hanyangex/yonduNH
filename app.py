@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import plotly.express as px
-from datetime import datetime, timedelta
+from datetime import datetime
 import io
 import os
 
@@ -15,15 +16,21 @@ st.set_page_config(
 )
 
 st.title("🚌 한양고속 차량 자산 및 정기검사 관리 시스템")
-st.caption("보유 차량의 차령만료일 및 정기검사 기간(전 3개월 ~ 후 1개월) 임박 알림을 제공합니다.")
+st.caption("보유 차량의 차령만료일, 정기검사 기간 및 취득가액 대비 감가상각 자산가치를 조회합니다.")
 
 st.markdown("---")
 
 # ==========================================
 # 1. 사이드바 - 설정 및 데이터 관리
 # ==========================================
-st.sidebar.header("⚙️ 차령 및 검사 관리 설정")
+st.sidebar.header("⚙️ 차령 및 감가상각 설정")
 age_warning_days = st.sidebar.number_input("차령만료 임박 기준 (일)", min_value=30, max_value=365, value=180)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("📉 감가상각 계산 옵션")
+depreciation_method = st.sidebar.selectbox("감가상각 방법", ["정액법 (Straight-line)", "정률법 (Declining balance)"])
+useful_life = st.sidebar.number_input("내용연수 (년)", min_value=1, max_value=20, value=9, help="버스 등 승합차량의 법정 내용연수 기준")
+salvage_rate = st.sidebar.slider("잔존가치율 (%)", min_value=0, max_value=20, value=5, help="정액법 상각 시 최종 잔존가치 비율") / 100.0
 
 st.sidebar.markdown("---")
 
@@ -39,27 +46,27 @@ if st.sidebar.button("🔄 저장된 데이터 초기화"):
 st.sidebar.info("💡 **정기검사 기준**\n- 검사 가능/임박: 만료일 전 90일(3개월) ~ 후 30일(1개월)\n- 검사 초과: 만료일 후 30일 경과")
 
 # ==========================================
-# 2. 차량 자산 파일 업로드 및 검사 계산 함수
+# 2. 차량 자산 파일 업로드 및 자동 계산 함수
 # ==========================================
-def calculate_bus_asset(df, age_alert_days):
-    # 필수 열에 '차령만료일' 추가 [수정]
-    required_cols = {"차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "정기검사유효일자"}
+def calculate_bus_asset(df, age_alert_days, method, life_years, s_rate):
+    # 필수 열 확인 ('취득가액' 추가)
+    required_cols = {"차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "정기검사유효일자", "취득가액"}
     if not required_cols.issubset(set(df.columns)):
         return None, f"엑셀 파일에 다음 필수 열이 포함되어야 합니다: {', '.join(required_cols)}"
 
     df = df.copy()
     
-    # 날짜 데이터 변환
+    # 숫자 및 날짜 데이터 타입 변환
+    df["취득가액"] = pd.to_numeric(df["취득가액"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
     df["최초등록일"] = pd.to_datetime(df["최초등록일"])
-    df["차령만료일"] = pd.to_datetime(df["차령만료일"])  # [수정] 직접 데이터에서 로드
+    df["차령만료일"] = pd.to_datetime(df["차령만료일"])
     df["정기검사유효일자"] = pd.to_datetime(df["정기검사유효일자"])
     
     today = datetime.now()
 
-    # 1. 차령만료 남은 일수 계산 (직접 넣은 차령만료일 기준) [수정]
+    # 1. 차령만료 남은 일수 및 상태 계산
     df["차령 남은일수"] = (df["차령만료일"] - today).dt.days
 
-    # 차령 만료 상태
     def get_age_status(days):
         if days < 0:
             return "차령 만료"
@@ -70,7 +77,7 @@ def calculate_bus_asset(df, age_alert_days):
 
     df["차령 상태"] = df["차령 남은일수"].apply(get_age_status)
 
-    # 2. 정기검사 기간 및 상태 계산
+    # 2. 정기검사 남은 일수 및 상태 계산
     df["검사 남은일수"] = (df["정기검사유효일자"] - today).dt.days
 
     def get_inspection_status(days_diff):
@@ -83,6 +90,42 @@ def calculate_bus_asset(df, age_alert_days):
 
     df["정기검사 상태"] = df["검사 남은일수"].apply(get_inspection_status)
 
+    # 3. 경과 연수(일 기반 float) 및 감가상각 계산
+    elapsed_days = (today - df["최초등록일"]).dt.days.clip(lower=0)
+    elapsed_years = elapsed_days / 365.25  # 경과 연수
+
+    current_values = []
+    accumulated_depreciations = []
+
+    for cost, years in zip(df["취득가액"], elapsed_years):
+        if cost <= 0:
+            current_values.append(0)
+            accumulated_depreciations.append(0)
+            continue
+
+        if "정액법" in method:
+            # 정액법 계산: 연간 감가상각액 = (취득가액 - 잔존가액) / 내용연수
+            salvage_val = cost * s_rate
+            annual_dep = (cost - salvage_val) / life_years
+            acc_dep = annual_dep * years
+            # 잔존가치 이하로 내려가지 않도록 처리
+            curr_val = max(salvage_val, cost - acc_dep)
+            acc_dep = cost - curr_val
+        else:
+            # 정률법 계산: 상각률 = 1 - (잔존가율)^(1/내용연수)
+            # 세법 기준 상각률 약산 공식 적용 (예: 5년 상각률 ~0.451, 9년 ~0.282)
+            rate = 1 - (s_rate if s_rate > 0 else 0.05) ** (1 / life_years)
+            curr_val = cost * ((1 - rate) ** years)
+            min_val = cost * s_rate
+            curr_val = max(min_val, curr_val)
+            acc_dep = cost - curr_val
+
+        current_values.append(round(curr_val))
+        accumulated_depreciations.append(round(acc_dep))
+
+    df["현재 잔존가치"] = current_values
+    df["누적 감가상각액"] = accumulated_depreciations
+
     # 문자열 날짜 포맷 변환
     df["최초등록일"] = df["최초등록일"].dt.strftime("%Y-%m-%d")
     df["차령만료일"] = df["차령만료일"].dt.strftime("%Y-%m-%d")
@@ -90,11 +133,12 @@ def calculate_bus_asset(df, age_alert_days):
 
     return df, None
 
-# 기본 샘플 데이터 (차령만료일 직접 포함) [수정]
+# 기본 샘플 데이터 (취득가액 포함)
 default_bus_df = pd.DataFrame({
     "차량번호": ["경기70아 1001", "경기70아 1002", "경기70아 1003", "경기70아 1004", "경기70아 1005", "경기70아 1006"],
     "차종": ["유니버스 익스프레스", "그랜버드 실크로드", "유니버스 노블", "그랜버드 이노베이션", "유니버스 노블", "그랜버드 실크로드"],
     "담당 노선": ["서울 - 부산", "서울 - 광주", "서울 - 대구", "서울 - 대전", "서울 - 전주", "서울 - 당진"],
+    "취득가액": [180000000, 195000000, 210000000, 200000000, 220000000, 175000000],
     "최초등록일": ["2017-03-15", "2018-08-20", "2020-11-10", "2022-05-01", "2024-01-15", "2016-09-01"],
     "차령만료일": ["2027-03-15", "2028-08-20", "2030-11-10", "2032-05-01", "2034-01-15", "2026-09-01"],
     "정기검사유효일자": ["2026-08-25", "2026-09-10", "2026-08-10", "2026-11-30", "2027-01-15", "2026-09-02"]
@@ -111,11 +155,12 @@ with col_up1:
     uploaded_file = st.file_uploader("차량목록 엑셀(.xlsx) 또는 CSV(.csv) 파일을 업로드하세요", type=["xlsx", "csv"])
 
 with col_up2:
-    # 샘플 다운로드 양식에 차령만료일 열 추가 [수정]
+    # 샘플 양식
     sample_df = pd.DataFrame({
         "차량번호": ["충남70아 1001", "충남70아 1002", "충남70아 1003"],
         "차종": ["유니버스 노블", "그랜버드 이노베이션", "유니버스 익스프레스"],
         "담당 노선": ["서울 - 태안", "서울 - 서산", "서울 - 당진"],
+        "취득가액": [200000000, 210000000, 190000000],
         "최초등록일": ["2016-05-10", "2021-03-15", "2024-02-01"],
         "차령만료일": ["2026-05-10", "2031-03-15", "2034-02-01"],
         "정기검사유효일자": ["2026-09-01", "2026-10-15", "2027-03-20"]
@@ -133,7 +178,7 @@ with col_up2:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# 1) 파일 업로드 발생 시 -> 로컬 데이터 파일 저장
+# 1) 파일 업로드 발생 시 저장
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith(".csv"):
@@ -141,21 +186,21 @@ if uploaded_file is not None:
         else:
             raw_df = pd.read_excel(uploaded_file)
 
-        _, err_msg = calculate_bus_asset(raw_df, age_warning_days)
+        _, err_msg = calculate_bus_asset(raw_df, age_warning_days, depreciation_method, useful_life, salvage_rate)
         if err_msg:
             st.error(err_msg)
         else:
             raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
-            st.success(f"총 {len(raw_df)}대의 차량 데이터가 사이트(서버)에 영구 저장되었습니다!")
+            st.success(f"총 {len(raw_df)}대의 차량 데이터가 성공적으로 저장되었습니다!")
     except Exception as e:
         st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
 # 2) 저장된 데이터를 불러오거나 기본 데이터 로드
 if os.path.exists(DATA_FILE):
     current_raw_df = pd.read_csv(DATA_FILE)
-    bus_data, _ = calculate_bus_asset(current_raw_df, age_warning_days)
+    bus_data, _ = calculate_bus_asset(current_raw_df, age_warning_days, depreciation_method, useful_life, salvage_rate)
 else:
-    bus_data, _ = calculate_bus_asset(default_bus_df, age_warning_days)
+    bus_data, _ = calculate_bus_asset(default_bus_df, age_warning_days, depreciation_method, useful_life, salvage_rate)
 
 st.session_state["bus_data"] = bus_data
 
@@ -181,6 +226,7 @@ with col_card1:
                     f"🚨 **[차령 만료] {row['차량번호']}**\n\n"
                     f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
                     f"- **차령만료일**: {row['차령만료일']}\n"
+                    f"- **현재 잔존가치**: {row['현재 잔존가치']:,} 원\n"
                     f"- **상태**: 만료일 {abs(days)}일 경과"
                 )
             else:
@@ -188,6 +234,7 @@ with col_card1:
                     f"⚠️ **[차령 임박] {row['차량번호']}**\n\n"
                     f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
                     f"- **차령만료일**: {row['차령만료일']}\n"
+                    f"- **현재 잔존가치**: {row['현재 잔존가치']:,} 원\n"
                     f"- **상태**: D-{days}일 남음"
                 )
 
@@ -219,27 +266,27 @@ with col_card2:
 st.markdown("---")
 
 # ==========================================
-# 5. 차량 자산 현황 요약
+# 5. 차량 자산 현황 요약 (자산 가치 추가)
 # ==========================================
-st.subheader("📊 3. 보유 자산 현황 요약")
+st.subheader("📊 2. 보유 자산 현황 요약")
 
 total_count = len(bus_data)
-age_urgent_count = len(urgent_ages)
-inspection_urgent_count = len(urgent_inspections)
-good_count = len(bus_data[(bus_data["차령 상태"] == "양호") & (bus_data["정기검사 상태"] == "검사 여유")])
+total_acquisition = bus_data["취득가액"].sum()
+total_current_value = bus_data["현재 잔존가치"].sum()
+total_depreciation = bus_data["누적 감가상각액"].sum()
 
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("총 보유 차량", f"{total_count} 대")
-m2.metric("차령만료 임박/만료", f"{age_urgent_count} 대", delta_color="inverse")
-m3.metric("검사 임박/초과 차량", f"{inspection_urgent_count} 대", delta_color="inverse")
-m4.metric("양호 및 정상 차량", f"{good_count} 대")
+m2.metric("총 취득가액", f"{total_acquisition:,.0f} 원")
+m3.metric("현재 자산 평가액(잔존가치)", f"{total_current_value:,.0f} 원")
+m4.metric("누적 감가상각액", f"{total_depreciation:,.0f} 원", delta=f"-{(total_depreciation/total_acquisition*100 if total_acquisition else 0):.1f}%", delta_color="inverse")
 
 st.markdown("---")
 
 # ==========================================
 # 6. 상세 차량 목록 조회 및 필터링
 # ==========================================
-st.subheader("📋 4. 상세 차량 목록 조회")
+st.subheader("📋 3. 상세 차량 자산 및 감가상각 목록")
 
 filter_col1, filter_col2, filter_col3 = st.columns([1, 1, 2])
 
@@ -273,6 +320,15 @@ if search_term:
         filtered_df["담당 노선"].str.contains(search_term, case=False)
     ]
 
-# 주요 열 순서 정리
-display_cols = ["차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "차령 상태", "정기검사유효일자", "정기검사 상태"]
-st.dataframe(filtered_df[display_cols], use_container_width=True)
+# 표시용 데이터 생성 및 금액 포맷팅
+display_df = filtered_df.copy()
+display_df["취득가액(원)"] = display_df["취득가액"].apply(lambda x: f"{x:,.0f}")
+display_df["현재 잔존가치(원)"] = display_df["현재 잔존가치"].apply(lambda x: f"{x:,.0f}")
+display_df["누적 감가상각액(원)"] = display_df["누적 감가상각액"].apply(lambda x: f"{x:,.0f}")
+
+display_cols = [
+    "차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "차령 상태", 
+    "취득가액(원)", "현재 잔존가치(원)", "누적 감가상각액(원)", "정기검사유효일자", "정기검사 상태"
+]
+
+st.dataframe(display_df[display_cols], use_container_width=True)

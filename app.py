@@ -3,6 +3,10 @@ import pandas as pd
 import plotly.express as px
 from datetime import datetime, timedelta
 import io
+import os  # [수정] 파일 존재 여부 확인 및 파일 삭제를 위해 추가
+
+# 0. 데이터 저장 파일 경로 설정 [수정]
+DATA_FILE = "saved_bus_data.csv"
 
 # 1. 페이지 기본 설정
 st.set_page_config(
@@ -24,11 +28,16 @@ age_warning_days = st.sidebar.number_input("차령만료 임박 기준 (일)", m
 
 st.sidebar.markdown("---")
 
-# 데이터 초기화 버튼
+# 데이터 초기화 버튼 [수정]
 if st.sidebar.button("🔄 저장된 데이터 초기화"):
+    # 로컬에 저장된 CSV 파일 삭제
+    if os.path.exists(DATA_FILE):
+        os.remove(DATA_FILE)
+    # 세션 상태 초기화
     if "bus_data" in st.session_state:
         del st.session_state["bus_data"]
-    st.sidebar.success("데이터가 기본값으로 초기화되었습니다.")
+    st.sidebar.success("저장된 데이터가 삭제되고 기본값으로 초기화되었습니다.")
+    st.rerun()  # 화면 새로고침
 
 st.sidebar.info("💡 **정기검사 기준**\n- 검사 가능/임박: 만료일 전 90일(3개월) ~ 후 30일(1개월)\n- 검사 초과: 만료일 후 30일 경과")
 
@@ -40,6 +49,9 @@ def calculate_bus_asset(df, max_years, age_alert_days):
     if not required_cols.issubset(set(df.columns)):
         return None, f"엑셀 파일에 다음 필수 열이 포함되어야 합니다: {', '.join(required_cols)}"
 
+    # 데이터 타입 복사 및 포맷 정리
+    df = df.copy()
+    
     # 날짜 데이터 변환
     df["최초등록일"] = pd.to_datetime(df["최초등록일"])
     df["정기검사유효일자"] = pd.to_datetime(df["정기검사유효일자"])
@@ -66,8 +78,6 @@ def calculate_bus_asset(df, max_years, age_alert_days):
     df["잔여 차령(년)"] = df["최초등록일"].apply(lambda d: max(0, max_years - (current_year - d.year)))
 
     # 3. 정기검사 기간 및 상태 계산 (기준일 기준 앞 3개월(-90일), 뒤 1개월(+30일))
-    # days_diff = 유효일자 - 오늘
-    # positive: 검사 유효일자 전 / negative: 검사 유효일자 후
     df["검사 남은일수"] = (df["정기검사유효일자"] - today).dt.days
 
     def get_inspection_status(days_diff):
@@ -97,7 +107,7 @@ default_bus_df = pd.DataFrame({
 })
 
 # ==========================================
-# 3. 엑셀 업로드 및 세션 기반 데이터 저장
+# 3. 엑셀 업로드 및 영구 데이터 저장 처리 [수정]
 # ==========================================
 st.subheader("📂 1. 차량목록 엑셀 업로드 및 자동 저장")
 
@@ -127,7 +137,7 @@ with col_up2:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# 파일 업로드 및 자동 저장 처리
+# 1) 파일 업로드 발생 시 -> 로컬 데이터 파일(saved_bus_data.csv)로 저장 [수정]
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith(".csv"):
@@ -135,20 +145,27 @@ if uploaded_file is not None:
         else:
             raw_df = pd.read_excel(uploaded_file)
 
-        processed_df, err_msg = calculate_bus_asset(raw_df, legal_limit_years, age_warning_days)
+        # 유효성 검사
+        _, err_msg = calculate_bus_asset(raw_df, legal_limit_years, age_warning_days)
         if err_msg:
             st.error(err_msg)
         else:
-            st.session_state["bus_data"] = processed_df
-            st.success(f"총 {len(processed_df)}대의 차량 데이터가 세션에 저장되었습니다!")
+            # 원본 데이터를 CSV로 저장하여 사이트에 데이터 보존
+            raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
+            st.success(f"총 {len(raw_df)}대의 차량 데이터가 사이트(서버)에 영구 저장되었습니다!")
     except Exception as e:
         st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
-# 세션 데이터가 없는 경우 기본 데이터 로드
-if "bus_data" not in st.session_state:
-    st.session_state["bus_data"], _ = calculate_bus_asset(default_bus_df, legal_limit_years, age_warning_days)
+# 2) 저장된 데이터를 불러오거나 기본 데이터 로드 [수정]
+if os.path.exists(DATA_FILE):
+    # 이전에 저장된 파일이 있는 경우 읽기
+    current_raw_df = pd.read_csv(DATA_FILE)
+    bus_data, _ = calculate_bus_asset(current_raw_df, legal_limit_years, age_warning_days)
+else:
+    # 저장된 파일이 없는 경우 기본 데이터 사용
+    bus_data, _ = calculate_bus_asset(default_bus_df, legal_limit_years, age_warning_days)
 
-bus_data = st.session_state["bus_data"]
+st.session_state["bus_data"] = bus_data
 
 st.markdown("---")
 

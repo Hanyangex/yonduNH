@@ -1,560 +1,334 @@
-<!DOCTYPE html>
-<html lang="ko">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>한양고속 실시간 유류주문 현황</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1000px;
-            margin: 30px auto;
-            padding: 20px;
-            background-color: #f4f7f6;
-        }
-        .header-container {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-        }
-        h1 {
-            color: #1a365d;
-            margin: 0;
-        }
-        .refresh-btn {
-            background-color: #319795;
-            color: white;
-            border: none;
-            padding: 8px 14px;
-            border-radius: 5px;
-            font-size: 13px;
-            cursor: pointer;
-            font-weight: bold;
-        }
-        .refresh-btn:hover {
-            background-color: #2c7a7b;
-        }
-        .card {
-            background: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-            margin-bottom: 25px;
-        }
-        .form-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-            gap: 15px;
-            margin-bottom: 15px;
-        }
-        .form-group {
-            display: flex;
-            flex-direction: column;
-        }
-        label {
-            font-size: 14px;
-            font-weight: bold;
-            margin-bottom: 5px;
-            color: #4a5568;
-        }
-        input, select {
-            padding: 10px;
-            border: 1px solid #cbd5e0;
-            border-radius: 5px;
-            font-size: 14px;
-        }
-        .submit-btn {
-            background-color: #2b6cb0;
-            color: white;
-            border: none;
-            padding: 12px;
-            border-radius: 5px;
-            font-weight: bold;
-            cursor: pointer;
-            width: 100%;
-            font-size: 15px;
-        }
-        .submit-btn:disabled {
-            background-color: #a0aec0;
-            cursor: not-allowed;
-        }
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+from datetime import datetime
+import io
+import os
 
-        /* 탭 스타일 */
-        .tab-container {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 20px;
-            flex-wrap: wrap;
-        }
-        .tab-btn {
-            padding: 10px 18px;
-            border: 1px solid #cbd5e0;
-            background-color: #ffffff;
-            color: #4a5568;
-            border-radius: 20px;
-            font-size: 14px;
-            font-weight: bold;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
-        .tab-btn:hover {
-            background-color: #edf2f7;
-        }
-        .tab-btn.active {
-            background-color: #2b6cb0;
-            color: white;
-            border-color: #2b6cb0;
-            box-shadow: 0 2px 4px rgba(43, 108, 176, 0.3);
-        }
+# 0. 데이터 저장 파일 경로 설정
+DATA_FILE = "saved_bus_data.csv"
 
-        .refinery-section {
-            margin-bottom: 25px;
-            border-top: 3px solid #2b6cb0;
-        }
-        .refinery-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 12px;
-        }
-        .refinery-title {
-            font-size: 18px;
-            font-weight: bold;
-            color: #2d3748;
-            margin: 0;
-        }
-        .total-badge {
-            background-color: #ebf8ff;
-            color: #2b6cb0;
-            padding: 6px 12px;
-            border-radius: 20px;
-            font-weight: bold;
-            font-size: 14px;
-            border: 1px solid #bee3f8;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            background: white;
-            border-radius: 6px;
-            overflow: hidden;
-            box-shadow: 0 1px 3px rgba(0,0,0,0.05);
-        }
-        th, td {
-            padding: 10px 12px;
-            text-align: left;
-            border-bottom: 1px solid #e2e8f0;
-            font-size: 14px;
-        }
-        th {
-            background-color: #f7fafc;
-            color: #4a5568;
-            font-weight: 600;
-        }
-        tr:hover {
-            background-color: #f8fafc;
-        }
-        .empty-row {
-            text-align: center;
-            color: #a0aec0;
-            padding: 15px;
-        }
-        .loading-text {
-            text-align: center;
-            padding: 20px;
-            color: #4a5568;
-        }
+# 1. 페이지 기본 설정
+st.set_page_config(
+    page_title="한양고속 차량 자산 및 정기검사 관리 시스템",
+    layout="wide"
+)
 
-        /* 재고 관리 섹션 스타일 */
-        .stock-input {
-            width: 100px;
-            padding: 6px 8px;
-            font-size: 13px;
-        }
-        .expected-stock {
-            font-weight: bold;
-            color: #2b6cb0;
-        }
-        .expected-stock.negative {
-            color: #e53e3e;
-        }
-    </style>
-</head>
-<body>
+st.title("🚌 한양고속 차량 자산 및 정기검사 관리 시스템")
+st.caption("보유 차량의 차령만료일, 정기검사 기간 및 취득가액 대비 감가상각 자산가치를 조회합니다.")
 
-    <div class="header-container">
-        <h1>한양고속 실시간 유류주문 현황</h1>
-        <button class="refresh-btn" onclick="fetchOrdersFromSheet()">🔄 새로고침</button>
-    </div>
+st.markdown("---")
 
-    <!-- 출하지별 재고/사용량 계산 카드 -->
-    <div class="card">
-        <h3>📊 출하지별 예상 재고 현황</h3>
-        <div style="overflow-x: auto;">
-            <table>
-                <thead>
-                    <tr>
-                        <th>출하지</th>
-                        <th>전월 재고 (L)</th>
-                        <th>당월 입고량 (L)</th>
-                        <th>당월 사용량 (L)</th>
-                        <th>현재 예상재고량 (L)</th>
-                    </tr>
-                </thead>
-                <tbody id="stockTableBody">
-                    <!-- JavaScript로 동적 생성 -->
-                </tbody>
-            </table>
-        </div>
-    </div>
+# ==========================================
+# 1. 사이드바 - 설정 및 데이터 관리
+# ==========================================
+st.sidebar.header("⚙️ 차령 및 감가상각 설정")
+age_warning_days = st.sidebar.number_input("차령만료 임박 기준 (일)", min_value=30, max_value=365, value=180)
 
-    <div class="card">
-        <h3>신규 유류 주문 등록</h3>
-        <form id="orderForm">
-            <div class="form-grid">
-                <div class="form-group">
-                    <label for="shipDate">출하일자</label>
-                    <input type="date" id="shipDate" required>
-                </div>
-                <div class="form-group">
-                    <label for="shipLocation">출하지</label>
-                    <input type="text" id="shipLocation" placeholder="예: 보령터미널, 평택, 서산" required>
-                </div>
-                <div class="form-group">
-                    <label for="refinery">정유사</label>
-                    <select id="refinery" required>
-                        <option value="">선택하세요</option>
-                        <option value="SK에너지">SK에너지</option>
-                        <option value="HD현대오일뱅크">HD현대오일뱅크</option>
-                        <option value="한화토탈">한화토탈</option>
-                        <option value="한진">한진</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="quantity">수량 (L)</label>
-                    <input type="number" id="quantity" placeholder="예: 20000" min="1" required>
-                </div>
-            </div>
-            <button type="submit" id="submitBtn" class="submit-btn">주문 등록하기</button>
-        </form>
-    </div>
+st.sidebar.markdown("---")
+st.sidebar.subheader("📉 감가상각 계산 옵션")
+depreciation_method = st.sidebar.selectbox("감가상각 방법", ["정액법 (Straight-line)", "정률법 (Declining balance)"])
+useful_life = st.sidebar.number_input("내용연수 (년)", min_value=1, max_value=20, value=9, help="버스 등 승합차량의 법정 내용연수 기준")
+salvage_rate = st.sidebar.slider("잔존가치율 (%)", min_value=0, max_value=20, value=5, help="정액법 상각 시 최종 잔존가치 비율") / 100.0
 
-    <div class="tab-container">
-        <button class="tab-btn active" onclick="switchTab('SK에너지', this)">SK에너지</button>
-        <button class="tab-btn" onclick="switchTab('HD현대오일뱅크', this)">HD현대오일뱅크</button>
-        <button class="tab-btn" onclick="switchTab('한화토탈', this)">한화토탈</button>
-        <button class="tab-btn" onclick="switchTab('한진', this)">한진</button>
-    </div>
+st.sidebar.markdown("---")
 
-    <div id="refineryContainer">
-        <div class="card loading-text">구글 시트에서 실시간 데이터를 불러오는 중입니다...</div>
-    </div>
+# 데이터 초기화 버튼
+if st.sidebar.button("🔄 저장된 데이터 초기화"):
+    if os.path.exists(DATA_FILE):
+        os.remove(DATA_FILE)
+    if "bus_data" in st.session_state:
+        del st.session_state["bus_data"]
+    st.sidebar.success("저장된 데이터가 삭제되고 기본값으로 초기화되었습니다.")
+    st.rerun()
 
-    <script>
-        const GOOGLE_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbx46ljUCW-lSsMtc79-FM9jDQL_Pau-l25tJ6gffnoWz780LOfu0YWoq1c9u6IRVU9psA/exec";
+st.sidebar.info("💡 **정기검사 기준**\n- 검사 가능/임박: 만료일 전 90일(3개월) ~ 후 30일(1개월)\n- 검사 초과: 만료일 후 30일 경과")
 
-        const refineries = ["SK에너지", "HD현대오일뱅크", "한화토탈", "한진"];
-        const defaultLocations = ["보령터미널"];
+# ==========================================
+# 2. 차량 자산 파일 업로드 및 자동 계산 함수
+# ==========================================
+def calculate_bus_asset(df, age_alert_days, method, life_years, s_rate):
+    # 필수 열 확인 ('취득가액' 추가)
+    required_cols = {"차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "정기검사유효일자", "취득가액"}
+    if not required_cols.issubset(set(df.columns)):
+        return None, f"엑셀 파일에 다음 필수 열이 포함되어야 합니다: {', '.join(required_cols)}"
 
-        let refineryData = {};
-        let rawOrders = [];
-        let currentTab = "SK에너지";
-        let isFetching = false;
+    df = df.copy()
+    
+    # 숫자 및 날짜 데이터 타입 변환
+    df["취득가액"] = pd.to_numeric(df["취득가액"].astype(str).str.replace(",", ""), errors='coerce').fillna(0)
+    df["최초등록일"] = pd.to_datetime(df["최초등록일"])
+    df["차령만료일"] = pd.to_datetime(df["차령만료일"])
+    df["정기검사유효일자"] = pd.to_datetime(df["정기검사유효일자"])
+    
+    today = datetime.now()
 
-        // 구글 시트 연동 재고 데이터 객체
-        let stockInputs = {};
+    # 1. 차령만료 남은 일수 및 상태 계산
+    df["차령 남은일수"] = (df["차령만료일"] - today).dt.days
 
-        document.getElementById('shipDate').value = new Date().toISOString().substring(0, 10);
+    def get_age_status(days):
+        if days < 0:
+            return "차령 만료"
+        elif days <= age_alert_days:
+            return "차령 임박"
+        else:
+            return "양호"
 
-        function createEmptyDataStructure() {
-            const structure = {};
-            refineries.forEach(name => {
-                structure[name] = {
-                    orders: [],
-                    totalQuantity: 0
-                };
-            });
-            return structure;
-        }
+    df["차령 상태"] = df["차령 남은일수"].apply(get_age_status)
 
-        refineryData = createEmptyDataStructure();
+    # 2. 정기검사 남은 일수 및 상태 계산
+    df["검사 남은일수"] = (df["정기검사유효일자"] - today).dt.days
 
-        function formatDate(dateStr) {
-            if (!dateStr) return '';
-            const str = String(dateStr);
-            if (str.includes('T')) return str.split('T')[0];
-            return str;
-        }
+    def get_inspection_status(days_diff):
+        if days_diff < -30:
+            return "검사 초과"
+        elif -30 <= days_diff <= 90:
+            return "검사 임박"
+        else:
+            return "검사 여유"
 
-        function formatTime(timeStr) {
-            if (!timeStr) return '';
-            const str = String(timeStr);
-            if (str.includes('T')) {
-                const dateObj = new Date(str);
-                if (!isNaN(dateObj.getTime())) {
-                    return dateObj.toLocaleTimeString('ko-KR');
-                }
-            }
-            return str;
-        }
+    df["정기검사 상태"] = df["검사 남은일수"].apply(get_inspection_status)
 
-        function switchTab(tabName, btnElement) {
-            currentTab = tabName;
-            const tabs = document.querySelectorAll('.tab-btn');
-            tabs.forEach(tab => tab.classList.remove('active'));
+    # 3. 경과 연수(일 기반 float) 및 감가상각 계산
+    elapsed_days = (today - df["최초등록일"]).dt.days.clip(lower=0)
+    elapsed_years = elapsed_days / 365.25  # 경과 연수
 
-            if (btnElement) {
-                btnElement.classList.add('active');
-            }
+    current_values = []
+    accumulated_depreciations = []
 
-            renderRefineryTables();
-        }
+    for cost, years in zip(df["취득가액"], elapsed_years):
+        if cost <= 0:
+            current_values.append(0)
+            accumulated_depreciations.append(0)
+            continue
 
-        async function fetchOrdersFromSheet() {
-            if (!GOOGLE_SCRIPT_URL || GOOGLE_SCRIPT_URL.includes("여기에")) return;
-            if (isFetching) return;
+        if "정액법" in method:
+            # 정액법 계산: 연간 감가상각액 = (취득가액 - 잔존가액) / 내용연수
+            salvage_val = cost * s_rate
+            annual_dep = (cost - salvage_val) / life_years
+            acc_dep = annual_dep * years
+            # 잔존가치 이하로 내려가지 않도록 처리
+            curr_val = max(salvage_val, cost - acc_dep)
+            acc_dep = cost - curr_val
+        else:
+            # 정률법 계산: 상각률 = 1 - (잔존가율)^(1/내용연수)
+            # 세법 기준 상각률 약산 공식 적용 (예: 5년 상각률 ~0.451, 9년 ~0.282)
+            rate = 1 - (s_rate if s_rate > 0 else 0.05) ** (1 / life_years)
+            curr_val = cost * ((1 - rate) ** years)
+            min_val = cost * s_rate
+            curr_val = max(min_val, curr_val)
+            acc_dep = cost - curr_val
 
-            isFetching = true;
-            const container = document.getElementById('refineryContainer');
+        current_values.append(round(curr_val))
+        accumulated_depreciations.append(round(acc_dep))
 
-            try {
-                const response = await fetch(GOOGLE_SCRIPT_URL);
-                if (!response.ok) {
-                    throw new Error(`HTTP 에러 발생 (${response.status})`);
-                }
+    df["현재 잔존가치"] = current_values
+    df["누적 감가상각액"] = accumulated_depreciations
 
-                const data = await response.json();
-                
-                // 구글 시트에서 수신한 객체 분할 (orders, stocks)
-                const orders = data.orders || [];
-                stockInputs = data.stocks || {};
+    # 문자열 날짜 포맷 변환
+    df["최초등록일"] = df["최초등록일"].dt.strftime("%Y-%m-%d")
+    df["차령만료일"] = df["차령만료일"].dt.strftime("%Y-%m-%d")
+    df["정기검사유효일자"] = df["정기검사유효일자"].dt.strftime("%Y-%m-%d")
 
-                rawOrders = orders;
+    return df, None
 
-                const tempData = createEmptyDataStructure();
+# 기본 샘플 데이터 (취득가액 포함)
+default_bus_df = pd.DataFrame({
+    "차량번호": ["경기70아 1001", "경기70아 1002", "경기70아 1003", "경기70아 1004", "경기70아 1005", "경기70아 1006"],
+    "차종": ["유니버스 익스프레스", "그랜버드 실크로드", "유니버스 노블", "그랜버드 이노베이션", "유니버스 노블", "그랜버드 실크로드"],
+    "담당 노선": ["서울 - 부산", "서울 - 광주", "서울 - 대구", "서울 - 대전", "서울 - 전주", "서울 - 당진"],
+    "취득가액": [180000000, 195000000, 210000000, 200000000, 220000000, 175000000],
+    "최초등록일": ["2017-03-15", "2018-08-20", "2020-11-10", "2022-05-01", "2024-01-15", "2016-09-01"],
+    "차령만료일": ["2027-03-15", "2028-08-20", "2030-11-10", "2032-05-01", "2034-01-15", "2026-09-01"],
+    "정기검사유효일자": ["2026-08-25", "2026-09-10", "2026-08-10", "2026-11-30", "2027-01-15", "2026-09-02"]
+})
 
-                orders.forEach(order => {
-                    const ref = order.refinery;
-                    if (tempData[ref]) {
-                        const rawQ = String(order.quantity).replace(/,/g, '');
-                        const q = Number(rawQ) || 0;
+# ==========================================
+# 3. 엑셀 업로드 및 영구 데이터 저장 처리
+# ==========================================
+st.subheader("📂 1. 차량목록 엑셀 업로드 및 자동 저장")
 
-                        tempData[ref].orders.push({
-                            date: formatDate(order.date),
-                            location: order.location,
-                            quantity: q,
-                            time: formatTime(order.time)
-                        });
-                        tempData[ref].totalQuantity += q;
-                    }
-                });
+col_up1, col_up2 = st.columns([2, 1])
 
-                refineryData = tempData;
-                renderRefineryTables();
-                renderStockTable();
+with col_up1:
+    uploaded_file = st.file_uploader("차량목록 엑셀(.xlsx) 또는 CSV(.csv) 파일을 업로드하세요", type=["xlsx", "csv"])
 
-            } catch (error) {
-                console.error("데이터 불러오기 실패:", error);
-                if (!container.querySelector('.refinery-section')) {
-                    container.innerHTML = `
-                        <div class="card loading-text" style="color: #e53e3e;">
-                            ⚠️ 데이터를 불러오지 못했습니다.<br>
-                            <small>Apps Script 배포 상태와 인터넷 연결을 확인해 주세요.</small>
-                        </div>
-                    `;
-                }
-            } finally {
-                isFetching = false;
-            }
-        }
+with col_up2:
+    # 샘플 양식
+    sample_df = pd.DataFrame({
+        "차량번호": ["충남70아 1001", "충남70아 1002", "충남70아 1003"],
+        "차종": ["유니버스 노블", "그랜버드 이노베이션", "유니버스 익스프레스"],
+        "담당 노선": ["서울 - 태안", "서울 - 서산", "서울 - 당진"],
+        "취득가액": [200000000, 210000000, 190000000],
+        "최초등록일": ["2016-05-10", "2021-03-15", "2024-02-01"],
+        "차령만료일": ["2026-05-10", "2031-03-15", "2034-02-01"],
+        "정기검사유효일자": ["2026-09-01", "2026-10-15", "2027-03-20"]
+    })
+    sample_buffer = io.BytesIO()
+    with pd.ExcelWriter(sample_buffer, engine='openpyxl') as writer:
+        sample_df.to_excel(writer, index=False)
 
-        function renderStockTable() {
-            const tbody = document.getElementById('stockTableBody');
-            
-            const fetchedLocations = rawOrders.map(o => o.location ? o.location.trim() : '').filter(Boolean);
-            const locations = Array.from(new Set([...defaultLocations, ...fetchedLocations]));
-            
-            Object.keys(stockInputs).forEach(loc => {
-                if (!locations.includes(loc)) locations.push(loc);
-            });
+    st.write(" ")
+    st.write(" ")
+    st.download_button(
+        label="📥 표준 양식 다운로드",
+        data=sample_buffer.getvalue(),
+        file_name="차량목록_양식.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    )
 
-            if (locations.length === 0) {
-                tbody.innerHTML = `<tr><td colspan="5" class="empty-row">출하지 데이터가 없습니다.</td></tr>`;
-                return;
-            }
+# 1) 파일 업로드 발생 시 저장
+if uploaded_file is not None:
+    try:
+        if uploaded_file.name.endswith(".csv"):
+            raw_df = pd.read_csv(uploaded_file)
+        else:
+            raw_df = pd.read_excel(uploaded_file)
 
-            const inboundTotals = {};
-            rawOrders.forEach(o => {
-                const loc = o.location ? o.location.trim() : '';
-                if (loc) {
-                    const q = Number(String(o.quantity).replace(/,/g, '')) || 0;
-                    inboundTotals[loc] = (inboundTotals[loc] || 0) + q;
-                }
-            });
+        _, err_msg = calculate_bus_asset(raw_df, age_warning_days, depreciation_method, useful_life, salvage_rate)
+        if err_msg:
+            st.error(err_msg)
+        else:
+            raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
+            st.success(f"총 {len(raw_df)}대의 차량 데이터가 성공적으로 저장되었습니다!")
+    except Exception as e:
+        st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
-            let html = '';
-            locations.forEach(loc => {
-                const prevStock = stockInputs[loc]?.prevStock || 0;
-                const usage = stockInputs[loc]?.usage || 0;
-                const inbound = inboundTotals[loc] || 0;
-                
-                const expectedStock = prevStock + inbound - usage;
-                const isNegative = expectedStock < 0;
+# 2) 저장된 데이터를 불러오거나 기본 데이터 로드
+if os.path.exists(DATA_FILE):
+    current_raw_df = pd.read_csv(DATA_FILE)
+    bus_data, _ = calculate_bus_asset(current_raw_df, age_warning_days, depreciation_method, useful_life, salvage_rate)
+else:
+    bus_data, _ = calculate_bus_asset(default_bus_df, age_warning_days, depreciation_method, useful_life, salvage_rate)
 
-                html += `
-                    <tr>
-                        <td><b>${loc}</b></td>
-                        <td>
-                            <input type="number" class="stock-input" value="${prevStock || ''}" placeholder="0" 
-                                onchange="updateStockInput('${loc}', 'prevStock', this.value)">
-                        </td>
-                        <td><b>${inbound.toLocaleString()} L</b></td>
-                        <td>
-                            <input type="number" class="stock-input" value="${usage || ''}" placeholder="0" 
-                                onchange="updateStockInput('${loc}', 'usage', this.value)">
-                        </td>
-                        <td class="expected-stock ${isNegative ? 'negative' : ''}">
-                            ${expectedStock.toLocaleString()} L
-                        </td>
-                    </tr>
-                `;
-            });
+st.session_state["bus_data"] = bus_data
 
-            tbody.innerHTML = html;
-        }
+st.markdown("---")
 
-        // 재고 입력 변경 시 구글 시트 전송 POST 처리
-        async function updateStockInput(location, key, value) {
-            const numVal = Number(value) || 0;
+# ==========================================
+# 4. 차령만료 및 정기검사 알림 카드
+# ==========================================
+col_card1, col_card2 = st.columns(2)
 
-            if (!stockInputs[location]) {
-                stockInputs[location] = { prevStock: 0, usage: 0 };
-            }
-            stockInputs[location][key] = numVal;
+# --- 4-1. 차령만료 임박 카드 ---
+with col_card1:
+    st.subheader("🚌 차령만료 임박 / 만료 알림")
+    urgent_ages = bus_data[bus_data["차령 상태"].isin(["차령 만료", "차령 임박"])].sort_values("차령 남은일수")
 
-            renderStockTable();
+    if urgent_ages.empty:
+        st.success("✅ 차령만료가 임박하거나 초과된 차량이 없습니다.")
+    else:
+        for _, row in urgent_ages.iterrows():
+            days = row["차령 남은일수"]
+            if days < 0:
+                st.error(
+                    f"🚨 **[차령 만료] {row['차량번호']}**\n\n"
+                    f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
+                    f"- **차령만료일**: {row['차령만료일']}\n"
+                    f"- **현재 잔존가치**: {row['현재 잔존가치']:,} 원\n"
+                    f"- **상태**: 만료일 {abs(days)}일 경과"
+                )
+            else:
+                st.warning(
+                    f"⚠️ **[차령 임박] {row['차량번호']}**\n\n"
+                    f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
+                    f"- **차령만료일**: {row['차령만료일']}\n"
+                    f"- **현재 잔존가치**: {row['현재 잔존가치']:,} 원\n"
+                    f"- **상태**: D-{days}일 남음"
+                )
 
-            try {
-                await fetch(GOOGLE_SCRIPT_URL, {
-                    method: 'POST',
-                    mode: 'no-cors',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        action: "updateStock",
-                        location: location,
-                        key: key,
-                        value: numVal
-                    })
-                });
-            } catch (error) {
-                console.error("재고 상태 저장 실패:", error);
-            }
-        }
+# --- 4-2. 정기검사 임박 카드 ---
+with col_card2:
+    st.subheader("🔔 정기검사 임박 / 초과 알림 (전 3개월 ~ 후 1개월)")
+    urgent_inspections = bus_data[bus_data["정기검사 상태"].isin(["검사 초과", "검사 임박"])].sort_values("검사 남은일수")
 
-        function renderRefineryTables() {
-            const container = document.getElementById('refineryContainer');
-            container.innerHTML = '';
+    if urgent_inspections.empty:
+        st.success("✅ 정기검사가 임박하거나 초과된 차량이 없습니다.")
+    else:
+        for _, row in urgent_inspections.iterrows():
+            days = row["검사 남은일수"]
+            if days < -30:
+                st.error(
+                    f"🚨 **[검사기한 초과] {row['차량번호']}**\n\n"
+                    f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
+                    f"- **유효일자**: {row['정기검사유효일자']}\n"
+                    f"- **상태**: 허용기간(후 1개월) {abs(days) - 30}일 초과"
+                )
+            else:
+                st.warning(
+                    f"⚠️ **[검사기간 연장/임박] {row['차량번호']}**\n\n"
+                    f"- **차종/노선**: {row['차종']} ({row['담당 노선']})\n"
+                    f"- **유효일자**: {row['정기검사유효일자']}\n"
+                    f"- **상태**: 기준일 기준 D{'-' if days >= 0 else '+'}{abs(days)}일"
+                )
 
-            const displayRefineries = refineries.filter(r => r === currentTab);
+st.markdown("---")
 
-            displayRefineries.forEach((name) => {
-                const data = refineryData[name];
-                if (!data) return;
+# ==========================================
+# 5. 차량 자산 현황 요약 (자산 가치 추가)
+# ==========================================
+st.subheader("📊 2. 보유 자산 현황 요약")
 
-                const section = document.createElement('div');
-                section.className = 'card refinery-section';
+total_count = len(bus_data)
+total_acquisition = bus_data["취득가액"].sum()
+total_current_value = bus_data["현재 잔존가치"].sum()
+total_depreciation = bus_data["누적 감가상각액"].sum()
 
-                let tableRowsHtml = '';
-                if (data.orders.length === 0) {
-                    tableRowsHtml = `
-                        <tr>
-                            <td colspan="5" class="empty-row">등록된 주문 내역이 없습니다.</td>
-                        </tr>
-                    `;
-                } else {
-                    data.orders.slice().reverse().forEach((order, idx) => {
-                        const orderNo = data.orders.length - idx;
-                        tableRowsHtml += `
-                            <tr>
-                                <td>${orderNo}</td>
-                                <td>${order.date}</td>
-                                <td>${order.location}</td>
-                                <td><b>${Number(order.quantity).toLocaleString()} L</b></td>
-                                <td>${order.time}</td>
-                            </tr>
-                        `;
-                    });
-                }
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("총 보유 차량", f"{total_count} 대")
+m2.metric("총 취득가액", f"{total_acquisition:,.0f} 원")
+m3.metric("현재 자산 평가액(잔존가치)", f"{total_current_value:,.0f} 원")
+m4.metric("누적 감가상각액", f"{total_depreciation:,.0f} 원", delta=f"-{(total_depreciation/total_acquisition*100 if total_acquisition else 0):.1f}%", delta_color="inverse")
 
-                section.innerHTML = `
-                    <div class="refinery-header">
-                        <h3 class="refinery-title">🏢 ${name}</h3>
-                        <span class="total-badge">총 합계: <span>${data.totalQuantity.toLocaleString()}</span> L</span>
-                    </div>
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>No.</th>
-                                <th>출하일자</th>
-                                <th>출하지</th>
-                                <th>수량(L)</th>
-                                <th>등록시간</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            ${tableRowsHtml}
-                        </tbody>
-                    </table>
-                `;
-                container.appendChild(section);
-            });
-        }
+st.markdown("---")
 
-        document.getElementById('orderForm').addEventListener('submit', async function(e) {
-            e.preventDefault();
+# ==========================================
+# 6. 상세 차량 목록 조회 및 필터링
+# ==========================================
+st.subheader("📋 3. 상세 차량 자산 및 감가상각 목록")
 
-            const submitBtn = document.getElementById('submitBtn');
-            submitBtn.disabled = true;
-            submitBtn.innerText = "저장 중...";
+filter_col1, filter_col2, filter_col3 = st.columns([1, 1, 2])
 
-            const now = new Date();
-            const newOrder = {
-                id: Date.now(),
-                date: document.getElementById('shipDate').value,
-                location: document.getElementById('shipLocation').value,
-                refinery: document.getElementById('refinery').value,
-                quantity: Number(document.getElementById('quantity').value),
-                time: now.toLocaleTimeString('ko-KR')
-            };
+with filter_col1:
+    status_filter = st.multiselect(
+        "차령 상태",
+        options=["차령 만료", "차령 임박", "양호"],
+        default=["차령 만료", "차령 임박", "양호"]
+    )
 
-            try {
-                await fetch(GOOGLE_SCRIPT_URL, {
-                    method: 'POST',
-                    mode: 'no-cors',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(newOrder)
-                });
+with filter_col2:
+    inspection_filter = st.multiselect(
+        "검사 상태",
+        options=["검사 초과", "검사 임박", "검사 여유"],
+        default=["검사 초과", "검사 임박", "검사 여유"]
+    )
 
-                document.getElementById('shipLocation').value = '';
-                document.getElementById('quantity').value = '';
+with filter_col3:
+    search_term = st.text_input("차량번호 / 차종 / 노선 검색", "")
 
-                setTimeout(() => {
-                    fetchOrdersFromSheet();
-                    submitBtn.disabled = false;
-                    submitBtn.innerText = "주문 등록하기";
-                }, 1500);
+# 필터링 적용
+filtered_df = bus_data[
+    bus_data["차령 상태"].isin(status_filter) &
+    bus_data["정기검사 상태"].isin(inspection_filter)
+]
 
-            } catch (error) {
-                console.error("저장 실패:", error);
-                alert("주문 등록에 실패했습니다.");
-                submitBtn.disabled = false;
-                submitBtn.innerText = "주문 등록하기";
-            }
-        });
+if search_term:
+    filtered_df = filtered_df[
+        filtered_df["차량번호"].str.contains(search_term, case=False) |
+        filtered_df["차종"].str.contains(search_term, case=False) |
+        filtered_df["담당 노선"].str.contains(search_term, case=False)
+    ]
 
-        setInterval(fetchOrdersFromSheet, 10000);
-        fetchOrdersFromSheet();
-    </script>
-</body>
-</html>
+# 표시용 데이터 생성 및 금액 포맷팅
+display_df = filtered_df.copy()
+display_df["취득가액(원)"] = display_df["취득가액"].apply(lambda x: f"{x:,.0f}")
+display_df["현재 잔존가치(원)"] = display_df["현재 잔존가치"].apply(lambda x: f"{x:,.0f}")
+display_df["누적 감가상각액(원)"] = display_df["누적 감가상각액"].apply(lambda x: f"{x:,.0f}")
+
+display_cols = [
+    "차량번호", "차종", "담당 노선", "최초등록일", "차령만료일", "차령 상태", 
+    "취득가액(원)", "현재 잔존가치(원)", "누적 감가상각액(원)", "정기검사유효일자", "정기검사 상태"
+]
+
+st.dataframe(display_df[display_cols], use_container_width=True)

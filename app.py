@@ -10,6 +10,8 @@ import os
 DATA_FILE = "saved_bus_data.csv"
 TABLE_NAME = "vehicle_data"
 REQUIRED_COLUMNS = ["차량번호", "차종", "담당 노선", "취득가액", "최초등록일", "차령만료일", "정기검사유효일자"]
+OPTIONAL_COLUMNS = ["연식", "예비차투입현황"]  # 있으면 함께 저장/표시되는 선택 항목 (예비차량 현황판에서 사용)
+RESERVE_ROUTE_LABEL = "예비차량"  # '담당 노선'에 이 값이 들어간 차량을 예비차량으로 인식
 
 # 0-1. Supabase 연동 (업로드한 차량 데이터를 서버(Supabase DB)에 영구 등록)
 # DB 컬럼(영문)과 화면/업로드 파일의 한글 컬럼을 서로 변환하기 위한 매핑
@@ -21,6 +23,8 @@ DB_COLUMN_MAP = {
     "최초등록일": "first_registered_at",
     "차령만료일": "age_expiry_date",
     "정기검사유효일자": "inspection_valid_date",
+    "연식": "model_year",
+    "예비차투입현황": "reserve_status",
 }
 DB_COLUMN_MAP_REV = {v: k for k, v in DB_COLUMN_MAP.items()}
 
@@ -80,7 +84,7 @@ def load_from_supabase(client):
             return None, None
         df = pd.DataFrame(rows)
         df = df.rename(columns=DB_COLUMN_MAP_REV)
-        cols = [c for c in REQUIRED_COLUMNS if c in df.columns]
+        cols = [c for c in REQUIRED_COLUMNS + OPTIONAL_COLUMNS if c in df.columns]
         df = df[cols]
         return (None if df.empty else df), None
     except Exception as e:
@@ -270,13 +274,15 @@ with col_up1:
 with col_up2:
     # 샘플 양식
     sample_df = pd.DataFrame({
-        "차량번호": ["충남70아 1001", "충남70아 1002", "충남70아 1003"],
-        "차종": ["유니버스 노블", "그랜버드 이노베이션", "유니버스 익스프레스"],
-        "담당 노선": ["서울 - 태안", "서울 - 서산", "서울 - 당진"],
-        "취득가액": [200000000, 210000000, 190000000],
-        "최초등록일": ["2016-05-10", "2021-03-15", "2024-02-01"],
-        "차령만료일": ["2026-05-10", "2031-03-15", "2034-02-01"],
-        "정기검사유효일자": ["2026-09-01", "2026-10-15", "2027-03-20"]
+        "차량번호": ["충남70아 1001", "충남70아 1002", "충남70아 1003", "충남70아 1004"],
+        "차종": ["유니버스 노블", "그랜버드 이노베이션", "유니버스 익스프레스", "그랜버드 실크로드"],
+        "담당 노선": ["서울 - 태안", "서울 - 서산", "서울 - 당진", "예비차량"],
+        "취득가액": [200000000, 210000000, 190000000, 185000000],
+        "최초등록일": ["2016-05-10", "2021-03-15", "2024-02-01", "2019-07-01"],
+        "차령만료일": ["2026-05-10", "2031-03-15", "2034-02-01", "2029-07-01"],
+        "정기검사유효일자": ["2026-09-01", "2026-10-15", "2027-03-20", "2026-12-05"],
+        "연식": ["2016년식", "2021년식", "2024년식", "2019년식"],
+        "예비차투입현황": ["", "", "", "대기중"]
     })
     sample_buffer = io.BytesIO()
     with pd.ExcelWriter(sample_buffer, engine='openpyxl') as writer:
@@ -459,3 +465,46 @@ display_cols = [
 ]
 
 st.dataframe(display_df[display_cols], use_container_width=True)
+
+st.markdown("---")
+
+# ==========================================
+# 7. 예비차량 현황판
+# ==========================================
+st.subheader("🅿️ 4. 예비차량 현황판")
+st.caption("담당 노선이 '예비차량'으로 등록된 차량만 모아서 보여줍니다. (엑셀의 '담당 노선' 칸에 '예비차량'이라고 입력하면 자동으로 여기에 표시됩니다)")
+
+reserve_df = bus_data[bus_data["담당 노선"].astype(str).str.strip() == RESERVE_ROUTE_LABEL].copy()
+
+if reserve_df.empty:
+    st.info("현재 '예비차량'으로 등록된 차량이 없습니다.")
+else:
+    # 연식: 업로드 파일에 '연식' 컬럼이 있으면 그 값을, 없거나 비어있으면 최초등록일 기준 연도로 자동 표시
+    fallback_year = pd.to_datetime(reserve_df["최초등록일"]).dt.year.astype(str) + "년식"
+    if "연식" in reserve_df.columns:
+        reserve_df["연식"] = reserve_df["연식"].astype(str).str.strip()
+        reserve_df.loc[reserve_df["연식"].isin(["", "nan", "None"]), "연식"] = fallback_year
+    else:
+        reserve_df["연식"] = fallback_year
+
+    # 예비차투입현황: 업로드 파일에 해당 컬럼이 있으면 그 값을, 없으면 안내 문구를 표시
+    if "예비차투입현황" in reserve_df.columns:
+        reserve_df["예비차투입현황"] = reserve_df["예비차투입현황"].astype(str).str.strip()
+        reserve_df.loc[reserve_df["예비차투입현황"].isin(["", "nan", "None"]), "예비차투입현황"] = "대기중"
+    else:
+        reserve_df["예비차투입현황"] = "대기중 (엑셀에 '예비차투입현황' 컬럼을 추가하면 상세 현황이 표시됩니다)"
+
+    reserve_show_cols = ["차량번호", "연식", "예비차투입현황"]
+    st.dataframe(reserve_df[reserve_show_cols], use_container_width=True, hide_index=True)
+    st.caption(f"총 {len(reserve_df)}대의 예비차량이 등록되어 있습니다.")
+
+    reserve_buffer = io.BytesIO()
+    with pd.ExcelWriter(reserve_buffer, engine='openpyxl') as writer:
+        reserve_df[reserve_show_cols].to_excel(writer, index=False, sheet_name="예비차량현황")
+    st.download_button(
+        label="🖨️ 예비차량 현황판 출력용 엑셀 다운로드",
+        data=reserve_buffer.getvalue(),
+        file_name=f"예비차량_현황판_{datetime.now().strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="reserve_download"
+    )

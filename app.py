@@ -6,47 +6,100 @@ from datetime import datetime
 import io
 import os
 
-# 0. 데이터 저장 파일 경로 설정 (Google Sheets 연결 실패 시 임시 대체용)
+# 0. 데이터 저장 파일 경로 설정 (Supabase 연결 실패 시 임시 대체용)
 DATA_FILE = "saved_bus_data.csv"
-WORKSHEET_NAME = "차량데이터"
+TABLE_NAME = "vehicle_data"
 REQUIRED_COLUMNS = ["차량번호", "차종", "담당 노선", "취득가액", "최초등록일", "차령만료일", "정기검사유효일자"]
 
-# 0-1. Google Sheets 연동 (업로드한 차량 데이터를 서버(구글시트)에 영구 등록)
+# 0-1. Supabase 연동 (업로드한 차량 데이터를 서버(Supabase DB)에 영구 등록)
+# DB 컬럼(영문)과 화면/업로드 파일의 한글 컬럼을 서로 변환하기 위한 매핑
+DB_COLUMN_MAP = {
+    "차량번호": "vehicle_no",
+    "차종": "vehicle_type",
+    "담당 노선": "route",
+    "취득가액": "acquisition_cost",
+    "최초등록일": "first_registered_at",
+    "차령만료일": "age_expiry_date",
+    "정기검사유효일자": "inspection_valid_date",
+}
+DB_COLUMN_MAP_REV = {v: k for k, v in DB_COLUMN_MAP.items()}
+
 try:
-    from streamlit_gsheets import GSheetsConnection
-    GSHEETS_LIB_AVAILABLE = True
+    from supabase import create_client
+    SUPABASE_LIB_AVAILABLE = True
 except ImportError:
-    GSHEETS_LIB_AVAILABLE = False
+    SUPABASE_LIB_AVAILABLE = False
 
 
 @st.cache_resource(show_spinner=False)
-def _get_gsheets_connection():
-    return st.connection("gsheets", type=GSheetsConnection)
+def _get_supabase_client():
+    url = st.secrets["supabase"]["url"]
+    key = st.secrets["supabase"]["key"]
+    return create_client(url, key)
 
 
-def get_gsheets_connection():
-    """secrets.toml(또는 Streamlit Cloud Secrets)에 연결 정보가 있으면 연결 객체를,
+def get_supabase_client():
+    """secrets.toml(또는 Streamlit Cloud Secrets)에 연결 정보가 있으면 클라이언트를,
     없거나 설정이 잘못되었으면 None을 반환한다."""
-    if not GSHEETS_LIB_AVAILABLE:
+    if not SUPABASE_LIB_AVAILABLE:
         return None
     try:
-        return _get_gsheets_connection()
+        return _get_supabase_client()
     except Exception:
         return None
 
 
-def load_from_gsheets(conn):
-    """시트에서 저장된 차량 데이터를 읽어온다. 실패 시 (None, 오류메시지)를 반환한다."""
+def _json_safe_records(df):
+    """DataFrame을 Supabase(REST API)에 보낼 수 있는 JSON 안전한 dict 목록으로 변환한다."""
+    df = df.copy()
+    for col in df.columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            df[col] = df[col].dt.strftime("%Y-%m-%d")
+    df = df.where(pd.notnull(df), None)
+    records = []
+    for row in df.to_dict(orient="records"):
+        clean = {}
+        for k, v in row.items():
+            if isinstance(v, np.integer):
+                v = int(v)
+            elif isinstance(v, np.floating):
+                v = float(v)
+            elif isinstance(v, pd.Timestamp):
+                v = v.strftime("%Y-%m-%d")
+            clean[k] = v
+        records.append(clean)
+    return records
+
+
+def load_from_supabase(client):
+    """DB에서 저장된 차량 데이터를 읽어온다. 실패 시 (None, 오류메시지)를 반환한다."""
     try:
-        df = conn.read(worksheet=WORKSHEET_NAME, ttl=0)
-        df = df.dropna(how="all")
+        res = client.table(TABLE_NAME).select("*").order("id").execute()
+        rows = res.data or []
+        if not rows:
+            return None, None
+        df = pd.DataFrame(rows)
+        df = df.rename(columns=DB_COLUMN_MAP_REV)
+        cols = [c for c in REQUIRED_COLUMNS if c in df.columns]
+        df = df[cols]
         return (None if df.empty else df), None
     except Exception as e:
         return None, str(e)
 
 
-def save_to_gsheets(conn, df):
-    conn.update(worksheet=WORKSHEET_NAME, data=df)
+def save_to_supabase(client, df):
+    """기존 데이터를 모두 지우고 업로드한 데이터로 교체한다."""
+    db_df = df.rename(columns=DB_COLUMN_MAP)
+    if "acquisition_cost" in db_df.columns:
+        db_df["acquisition_cost"] = pd.to_numeric(
+            db_df["acquisition_cost"].astype(str).str.replace(",", ""), errors="coerce"
+        )
+    db_cols = [c for c in DB_COLUMN_MAP.values() if c in db_df.columns]
+    db_df = db_df[db_cols]
+    records = _json_safe_records(db_df)
+    client.table(TABLE_NAME).delete().gte("id", 0).execute()
+    if records:
+        client.table(TABLE_NAME).insert(records).execute()
 
 
 # 1. 페이지 기본 설정
@@ -63,18 +116,18 @@ st.markdown("---")
 # ==========================================
 # 1. 사이드바 - 설정 및 데이터 관리
 # ==========================================
-gsheets_conn = get_gsheets_connection()
+supabase_client = get_supabase_client()
 
-st.sidebar.header("🔗 서버(Google Sheets) 연결 상태")
-if gsheets_conn is not None:
-    st.sidebar.success("✅ Google Sheets 서버에 연결되었습니다.\n업로드한 차량 데이터가 시트에 자동 등록됩니다.")
+st.sidebar.header("🔗 서버(Supabase) 연결 상태")
+if supabase_client is not None:
+    st.sidebar.success("✅ Supabase 서버에 연결되었습니다.\n업로드한 차량 데이터가 DB에 자동 등록됩니다.")
 else:
     st.sidebar.warning(
-        "⚠️ Google Sheets 서버에 연결되어 있지 않습니다.\n"
+        "⚠️ Supabase 서버에 연결되어 있지 않습니다.\n"
         "지금은 이 서버 인스턴스에만 임시로 데이터가 저장되며, 재배포 시 사라질 수 있습니다.\n\n"
         "secrets.toml(또는 Streamlit Cloud의 Secrets 설정)에 연결 정보를 등록하면 "
-        "업로드 데이터가 Google Sheets에 영구 등록됩니다. "
-        "자세한 방법은 GOOGLE_SHEETS_설정가이드.md 를 참고하세요."
+        "업로드 데이터가 Supabase에 영구 등록됩니다. "
+        "자세한 방법은 SUPABASE_설정가이드.md 를 참고하세요."
     )
 
 st.sidebar.markdown("---")
@@ -93,11 +146,11 @@ st.sidebar.markdown("---")
 if st.sidebar.button("🔄 저장된 데이터 초기화"):
     if os.path.exists(DATA_FILE):
         os.remove(DATA_FILE)
-    if gsheets_conn is not None:
+    if supabase_client is not None:
         try:
-            save_to_gsheets(gsheets_conn, pd.DataFrame(columns=REQUIRED_COLUMNS))
+            supabase_client.table(TABLE_NAME).delete().gte("id", 0).execute()
         except Exception as e:
-            st.sidebar.error(f"Google Sheets 초기화 중 오류가 발생했습니다: {e}")
+            st.sidebar.error(f"Supabase 초기화 중 오류가 발생했습니다: {e}")
     if "bus_data" in st.session_state:
         del st.session_state["bus_data"]
     st.sidebar.success("저장된 데이터가 삭제되고 기본값으로 초기화되었습니다.")
@@ -238,7 +291,7 @@ with col_up2:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# 1) 파일 업로드 발생 시 저장 (Google Sheets 서버 등록 우선, 실패 시 로컬 임시 저장)
+# 1) 파일 업로드 발생 시 저장 (Supabase 서버 등록 우선, 실패 시 로컬 임시 저장)
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith(".csv"):
@@ -250,23 +303,23 @@ if uploaded_file is not None:
         if err_msg:
             st.error(err_msg)
         else:
-            if gsheets_conn is not None:
+            if supabase_client is not None:
                 try:
-                    save_to_gsheets(gsheets_conn, raw_df)
-                    st.success(f"총 {len(raw_df)}대의 차량 데이터가 Google Sheets 서버에 등록되었습니다!")
+                    save_to_supabase(supabase_client, raw_df)
+                    st.success(f"총 {len(raw_df)}대의 차량 데이터가 Supabase 서버에 등록되었습니다!")
                 except Exception as e:
                     raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
-                    st.error(f"Google Sheets 등록 중 오류가 발생하여 로컬에 임시 저장했습니다: {e}")
+                    st.error(f"Supabase 등록 중 오류가 발생하여 로컬에 임시 저장했습니다: {e}")
             else:
                 raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
-                st.warning("Google Sheets 서버가 연결되어 있지 않아 로컬에만 임시 저장되었습니다. (앱 재배포 시 유실될 수 있음)")
+                st.warning("Supabase 서버가 연결되어 있지 않아 로컬에만 임시 저장되었습니다. (앱 재배포 시 유실될 수 있음)")
     except Exception as e:
         st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
-# 2) 저장된 데이터를 불러오거나 기본 데이터 로드 (Google Sheets 우선 → 로컬 임시파일 → 기본 샘플)
+# 2) 저장된 데이터를 불러오거나 기본 데이터 로드 (Supabase 우선 → 로컬 임시파일 → 기본 샘플)
 current_raw_df = None
-if gsheets_conn is not None:
-    current_raw_df, _load_err = load_from_gsheets(gsheets_conn)
+if supabase_client is not None:
+    current_raw_df, _load_err = load_from_supabase(supabase_client)
 
 if current_raw_df is None and os.path.exists(DATA_FILE):
     current_raw_df = pd.read_csv(DATA_FILE)

@@ -1,0 +1,1459 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>한양고속 사고관리 대시보드</title>
+<style>
+  :root{
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --surface-2: #f2f1ee;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #898781;
+    --grid: #e1e0d9;
+    --baseline: #c3c2b7;
+    --border: rgba(11,11,11,0.10);
+    --series-1: #2a78d6; /* blue - 가해 */
+    --series-2: #eb6834; /* orange - 피해 */
+    --series-3: #1baf7a; /* aqua - 쌍방 */
+    --seq-100: #cde2fb; --seq-250:#86b6ef; --seq-400:#3987e5; --seq-450:#2a78d6; --seq-550:#1c5cab;
+    --good: #0ca30c;
+    --warning: #b8790a;
+    --serious: #ec835a;
+    --critical: #d03b3b;
+    --chip-good-bg: #e6f6e6;
+    --chip-warning-bg: #fdf1dc;
+    --chip-critical-bg: #fbe7e6;
+    --chip-muted-bg: #eeede9;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:where(:not([data-theme="light"])){
+      color-scheme: dark;
+      --page: #0d0d0d;
+      --surface: #1a1a19;
+      --surface-2: #232322;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #918f89;
+      --grid: #2c2c2a;
+      --baseline: #383835;
+      --border: rgba(255,255,255,0.10);
+      --series-1: #3987e5;
+      --series-2: #d95926;
+      --series-3: #199e70;
+      --good: #0ca30c;
+      --warning: #e0a53a;
+      --serious: #ec835a;
+      --critical: #e66767;
+      --chip-good-bg: #123312;
+      --chip-warning-bg: #3a2c0d;
+      --chip-critical-bg: #3a1414;
+      --chip-muted-bg: #2a2a28;
+    }
+  }
+  :root[data-theme="dark"]{
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --surface-2: #232322;
+    --text-primary: #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted: #918f89;
+    --grid: #2c2c2a;
+    --baseline: #383835;
+    --border: rgba(255,255,255,0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --good: #0ca30c;
+    --warning: #e0a53a;
+    --serious: #ec835a;
+    --critical: #e66767;
+    --chip-good-bg: #123312;
+    --chip-warning-bg: #3a2c0d;
+    --chip-critical-bg: #3a1414;
+    --chip-muted-bg: #2a2a28;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    background: var(--page);
+    color: var(--text-primary);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+    margin: 0;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 20px 20px 60px; }
+
+  header.top { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:18px; flex-wrap:wrap; }
+  header.top h1 { font-size: 20px; margin: 0 0 4px; letter-spacing:-0.01em; }
+  header.top p { margin:0; color: var(--text-secondary); font-size: 13px; max-width: 640px; }
+  .top-actions { display:flex; gap:8px; align-items:center; flex-shrink:0; }
+
+  button, .btn {
+    font: inherit; cursor:pointer; border-radius: 8px; border:1px solid var(--border);
+    background: var(--surface); color: var(--text-primary); padding: 8px 12px;
+  }
+  button:hover { background: var(--surface-2); }
+  button.primary { background: var(--series-1); color:#fff; border-color:transparent; }
+  button.primary:hover { filter:brightness(1.05); }
+  button.toggled { background: var(--series-1); color:#fff; border-color: transparent; }
+  button:disabled { opacity:0.5; cursor:not-allowed; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--series-1); outline-offset:1px; }
+
+  /* ---- login gate ---- */
+  .login-screen {
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    background: var(--page); padding:20px;
+  }
+  .login-box {
+    width:min(360px,100%); background:var(--surface); border:1px solid var(--border);
+    border-radius:14px; padding:28px 26px; text-align:center;
+  }
+  .login-box h1 { font-size:16px; margin:0 0 6px; }
+  .login-box p { font-size:12.5px; color:var(--text-secondary); margin:0 0 18px; }
+  .login-box input[type="password"] {
+    width:100%; font:inherit; padding:10px 12px; border-radius:8px; border:1px solid var(--border);
+    background:var(--page); color:var(--text-primary); margin-bottom:10px; text-align:center;
+  }
+  .login-box button.primary { width:100%; padding:10px; }
+  .login-error { color:var(--critical); font-size:12.5px; min-height:18px; margin-bottom:6px; }
+  .sync-note { font-size:11px; color:var(--text-muted); margin-top:14px; }
+
+  .stat-row { display:grid; grid-template-columns: repeat(6, 1fr); gap:10px; margin-bottom:16px; }
+  @media (max-width: 900px){ .stat-row{ grid-template-columns: repeat(3,1fr);} }
+  @media (max-width: 560px){ .stat-row{ grid-template-columns: repeat(2,1fr);} }
+  .stat-tile {
+    background: var(--surface); border:1px solid var(--border); border-radius:12px;
+    padding: 12px 14px;
+  }
+  .stat-tile .num { font-size: 22px; font-weight:600; font-variant-numeric: proportional-nums; }
+  .stat-tile .lbl { font-size: 11.5px; color: var(--text-secondary); margin-top:2px; }
+  .stat-tile.accent-critical .num { color: var(--critical); }
+  .stat-tile.accent-good .num { color: var(--good); }
+
+  .panel { background: var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px 16px; margin-bottom:16px; }
+  .panel h2 { font-size: 13px; margin:0 0 10px; color: var(--text-secondary); font-weight:600; text-transform:none; }
+
+  .charts-row { display:grid; grid-template-columns: 1.3fr 1fr; gap:14px; margin-bottom:16px; }
+  @media (max-width: 860px){ .charts-row{ grid-template-columns: 1fr; } }
+
+  .legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:8px; font-size:12px; color:var(--text-secondary); }
+  .legend .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:5px; vertical-align:-1px; }
+
+  .bars-wrap { position:relative; }
+  .bar-row { display:flex; align-items:center; gap:8px; height:22px; margin-bottom:6px; }
+  .bar-row .rlabel { width: 92px; font-size:12px; color:var(--text-secondary); text-align:right; flex-shrink:0; white-space:nowrap; }
+  .bar-row .track { flex:1; background:transparent; position:relative; height:14px; }
+  .bar-row .fill { height:14px; border-radius:4px; position:relative; transition: width .2s; }
+  .bar-row .val { font-size:12px; color:var(--text-primary); width:28px; font-variant-numeric: tabular-nums; }
+
+  svg.monthchart { width:100%; height:190px; overflow:visible; }
+  .axis-label { fill: var(--text-muted); font-size: 10.5px; }
+  .gridline { stroke: var(--grid); stroke-width:1; }
+  .baseline { stroke: var(--baseline); stroke-width:1; }
+  .mbar { fill: var(--seq-450); cursor:pointer; }
+  .mbar:hover { fill: var(--series-1); filter:brightness(1.1); }
+  .mbar-label { fill: var(--text-secondary); font-size: 10.5px; text-anchor:middle; }
+
+  .status-chip {
+    display:inline-flex; align-items:center; gap:5px; padding: 3px 8px; border-radius:999px;
+    font-size:11.5px; font-weight:600; white-space:nowrap;
+  }
+  .status-chip .dot { width:7px; height:7px; border-radius:50%; flex-shrink:0; }
+  .status-good { background: var(--chip-good-bg); color: var(--good); }
+  .status-warning { background: var(--chip-warning-bg); color: var(--warning); }
+  .status-critical { background: var(--chip-critical-bg); color: var(--critical); }
+  .status-muted { background: var(--chip-muted-bg); color: var(--text-secondary); }
+
+  .role-chip { display:inline-block; padding:2px 8px; border-radius:6px; font-size:11.5px; font-weight:600; }
+  .role-가해 { background: color-mix(in srgb, var(--series-1) 16%, transparent); color: var(--series-1); }
+  .role-피해 { background: color-mix(in srgb, var(--series-2) 16%, transparent); color: var(--series-2); }
+  .role-쌍방 { background: color-mix(in srgb, var(--series-3) 18%, transparent); color: var(--series-3); }
+
+  .filter-row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  .filter-row input[type="text"] {
+    flex: 1 1 220px; padding: 8px 12px; border-radius:8px; border:1px solid var(--border);
+    background: var(--surface); color:var(--text-primary); font:inherit;
+  }
+  select {
+    padding: 8px 10px; border-radius:8px; border:1px solid var(--border);
+    background: var(--surface); color:var(--text-primary); font:inherit;
+  }
+
+  table { width:100%; border-collapse: collapse; font-size:12.5px; }
+  thead th {
+    text-align:left; padding: 8px 10px; color: var(--text-muted); font-weight:600;
+    border-bottom: 1px solid var(--grid); white-space:nowrap; cursor:pointer; user-select:none;
+  }
+  thead th:hover { color: var(--text-primary); }
+  tbody td { padding: 9px 10px; border-bottom: 1px solid var(--grid); vertical-align:top; }
+  tbody tr { cursor:pointer; }
+  tbody tr:hover td { background: var(--surface-2); }
+  td.loc { color: var(--text-secondary); max-width:160px; }
+  td.desc-preview { color: var(--text-secondary); max-width:260px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .mono { font-variant-numeric: tabular-nums; }
+  .count-note { color:var(--text-muted); font-size:12px; margin: 6px 2px 0; }
+
+  .driver-grid { display:grid; grid-template-columns: repeat(auto-fill, minmax(150px,1fr)); gap:8px; }
+  .driver-card {
+    border:1px solid var(--border); border-radius:8px; padding:8px 10px; cursor:pointer; background:var(--surface);
+  }
+  .driver-card:hover { background: var(--surface-2); }
+  .driver-card .dname { font-weight:600; font-size:13px; }
+  .driver-card .dmeta { font-size:11.5px; color:var(--text-secondary); margin-top:2px; }
+  .driver-card.active { outline:2px solid var(--series-1); }
+
+  /* Detail overlay */
+  .overlay {
+    position:fixed; inset:0; background: rgba(0,0,0,0.35); display:none; align-items:stretch;
+    justify-content:flex-end; z-index:50;
+  }
+  .overlay.open { display:flex; }
+  .drawer {
+    width: min(560px, 100%); background: var(--page); height:100%; overflow-y:auto;
+    padding: 20px 22px 60px; border-left:1px solid var(--border);
+  }
+  .drawer h2 { font-size:17px; margin:0 0 2px; }
+  .drawer .sub { color:var(--text-secondary); font-size:12.5px; margin-bottom:14px; }
+  .drawer-actions { display:flex; gap:8px; float:right; }
+  .field-grid { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:12px; }
+  .party-card { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; }
+  .party-card h3 { font-size:12.5px; margin:0 0 8px; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.03em; }
+  .kv { display:flex; justify-content:space-between; gap:8px; font-size:12.5px; padding:3px 0; border-bottom: 1px dashed var(--grid); }
+  .kv:last-child{ border-bottom:none; }
+  .kv .k { color: var(--text-muted); flex-shrink:0; }
+  .kv .v { text-align:right; font-variant-numeric: tabular-nums; }
+  .block-title { font-size:12.5px; font-weight:600; color:var(--text-secondary); margin: 16px 0 6px; }
+  .desc-box { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; font-size:13px; line-height:1.6; }
+  .note-box { background: var(--chip-warning-bg); border:1px solid var(--border); border-radius:10px; padding:10px 14px; font-size:12.5px; color:var(--text-primary); }
+  .doc-tag { display:inline-block; background:var(--surface-2); border:1px solid var(--border); border-radius:6px; padding:2px 8px; font-size:11.5px; margin:2px 4px 0 0; }
+  .privacy-note { font-size:11px; color:var(--text-muted); margin-top:18px; border-top:1px solid var(--grid); padding-top:10px; }
+
+  .empty-state { text-align:center; padding: 40px 20px; color: var(--text-muted); }
+  ::-webkit-scrollbar { width:10px; height:10px; }
+  ::-webkit-scrollbar-thumb { background: var(--baseline); border-radius:5px; }
+
+  /* Register modal */
+  .modal-overlay {
+    position:fixed; inset:0; background: rgba(0,0,0,0.45); display:none; align-items:center;
+    justify-content:center; z-index:60; padding:20px;
+  }
+  .modal-overlay.open { display:flex; }
+  .modal-box {
+    width:min(720px, 100%); max-height:88vh; overflow-y:auto; background:var(--page);
+    border:1px solid var(--border); border-radius:14px; padding:22px 24px 20px;
+  }
+  .modal-box h2 { font-size:17px; margin:0 0 4px; }
+  .modal-box .sub { color:var(--text-secondary); font-size:12.5px; margin-bottom:16px; }
+  .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px 14px; }
+  .field { display:flex; flex-direction:column; gap:4px; }
+  .field label { font-size:12px; color:var(--text-secondary); }
+  .field input, .field select, .field textarea {
+    font:inherit; padding:8px 10px; border-radius:8px; border:1px solid var(--border);
+    background:var(--surface); color:var(--text-primary); width:100%;
+  }
+  .field textarea { min-height:60px; resize:vertical; }
+  .field-section-title {
+    grid-column:1/-1; font-size:12px; font-weight:600; color:var(--text-secondary);
+    margin:10px 0 -2px; border-top:1px solid var(--grid); padding-top:12px;
+  }
+  .field-section-title:first-child { border-top:none; padding-top:0; margin-top:0; }
+  .doc-check-row { grid-column:1/-1; display:flex; gap:14px; flex-wrap:wrap; font-size:13px; }
+  .doc-check-row label { display:flex; align-items:center; gap:5px; }
+  .doc-upload-row { grid-column:1/-1; display:flex; align-items:center; gap:12px; flex-wrap:wrap; font-size:13px; }
+  .doc-upload-row label { display:flex; align-items:center; gap:5px; flex-shrink:0; }
+  .doc-upload-row input[type="file"] { font-size:11.5px; color:var(--text-secondary); max-width:220px; }
+  .doc-upload-hint { grid-column:1/-1; font-size:11px; color:var(--text-muted); margin-top:-4px; }
+  .doc-tag-file { cursor:pointer; border:1px solid var(--border); background:var(--surface-2); border-radius:6px; padding:2px 8px; font-size:11.5px; margin:2px 4px 0 0; color:var(--text-primary); }
+  .doc-tag-file:hover { background:var(--chip-warning-bg); }
+  .doc-tag-file::after { content:' 🔎'; font-size:10px; }
+  .doc-preview { margin-top:10px; border:1px solid var(--border); border-radius:8px; padding:8px; background:var(--surface); }
+  .doc-preview img { max-width:100%; border-radius:4px; display:block; }
+  .doc-preview embed { border-radius:4px; }
+  .doc-preview .doc-preview-name { font-size:11.5px; color:var(--text-secondary); margin-bottom:6px; }
+  .modal-footer { display:flex; justify-content:flex-end; gap:8px; margin-top:18px; }
+  .form-error { color: var(--critical); font-size:12.5px; margin-bottom:10px; display:none; }
+  .form-error.show { display:block; }
+
+  /* Toast */
+  .toast {
+    position:fixed; left:50%; bottom:28px; transform:translateX(-50%) translateY(12px);
+    background: var(--text-primary); color: var(--page); padding:10px 16px; border-radius:8px;
+    font-size:12.5px; opacity:0; pointer-events:none; transition: opacity .2s, transform .2s; z-index:200;
+    max-width:90vw; text-align:center;
+  }
+  .toast.show { opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* Print
+     Print no longer reuses this page's own window.print(). Each print job now
+     opens its content in a brand-new, blank popup window (see PRINT_STYLES /
+     openPrintWindow() in the script below) and prints that instead. That's what
+     actually fixes the "extra blank pages" bug: once this page's window has ever
+     loaded a PDF into the document-preview <embed> (문서 미리보기), some browsers'
+     built-in PDF viewer can hijack that window's print pipeline for the rest of
+     its lifetime and leak the PDF's own pages into every later print job, no
+     matter what CSS or DOM cleanup is done here. A freshly-opened window has
+     never loaded a PDF, so it can't be hijacked. */
+</style>
+</head>
+<body>
+
+<div class="login-screen" id="loginScreen">
+  <div class="login-box">
+    <h1>한양고속 차량안전팀 · 사고관리</h1>
+    <p>부서 공용 비밀번호를 입력하세요.</p>
+    <div class="login-error" id="loginError"></div>
+    <input type="password" id="loginPassword" placeholder="비밀번호">
+    <button class="primary" id="loginSubmit">입장</button>
+    <div class="sync-note">이 비밀번호는 부서 내부에서만 공유해 주세요.</div>
+  </div>
+</div>
+
+<div class="wrap" id="appRoot" style="display:none;">
+  <header class="top">
+    <div>
+      <h1>한양고속 차량안전팀 · 2026년 사고관리 대시보드</h1>
+      <p>사고보고서·지급청구서·개인기록카드·등사지시서 원본을 디지털화하고, 새 사고를 직접 등록·인쇄할 수 있는 부서 공용 자료입니다.</p>
+    </div>
+    <div class="top-actions">
+      <button id="registerBtn" class="primary">+ 새 사고 등록</button>
+      <button id="privacyToggle" title="주민등록번호·연락처 표시 전환">🔒 개인정보 가리기</button>
+      <button id="logoutBtn" title="로그아웃">로그아웃</button>
+    </div>
+  </header>
+
+  <div class="stat-row" id="statRow"></div>
+
+  <div class="panel">
+    <h2>사고처리 현황 (전체 누계)</h2>
+    <div class="stat-row" id="processStatRow" style="margin-bottom:0;"></div>
+  </div>
+
+  <div class="charts-row">
+    <div class="panel">
+      <h2>월별 사고 발생 건수 (2026년)</h2>
+      <svg class="monthchart" id="monthChart" viewBox="0 0 640 190" preserveAspectRatio="none"></svg>
+    </div>
+    <div class="panel">
+      <h2>구분별 현황</h2>
+      <div class="bars-wrap" id="roleBars"></div>
+      <h2 style="margin-top:16px;">처리 상태</h2>
+      <div class="bars-wrap" id="statusBars"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>기사별 사고 건수 (클릭하여 필터링)</h2>
+    <div class="driver-grid" id="driverGrid"></div>
+  </div>
+
+  <div class="panel">
+    <h2 style="display:flex;justify-content:space-between;align-items:center;">
+      <span>전체 사고 목록</span>
+      <span class="count-note" id="resultCount"></span>
+    </h2>
+    <div class="filter-row">
+      <input type="text" id="searchInput" placeholder="기사명, 장소, 상대방, 차량번호로 검색..." />
+      <select id="roleFilter">
+        <option value="">전체 구분</option>
+        <option value="가해">가해</option>
+        <option value="피해">피해</option>
+        <option value="쌍방">쌍방</option>
+      </select>
+      <select id="statusFilter">
+        <option value="">전체 상태</option>
+        <option value="critical">뺑소니 미해결</option>
+        <option value="good">종결</option>
+        <option value="warning">접수/처리중</option>
+        <option value="muted">기록없음</option>
+      </select>
+      <select id="monthFilter">
+        <option value="">전체 월</option>
+      </select>
+      <button id="resetFilters">초기화</button>
+      <button id="printListBtn" title="현재 목록 인쇄">🖨 목록 인쇄</button>
+    </div>
+    <div style="overflow-x:auto;">
+      <table id="mainTable">
+        <thead>
+          <tr>
+            <th data-key="accident_date">날짜 ▾</th>
+            <th data-key="our_driver">기사</th>
+            <th data-key="role">구분</th>
+            <th data-key="location">사고 장소</th>
+            <th>상대방</th>
+            <th>인명피해</th>
+            <th>상태</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody"></tbody>
+      </table>
+      <div class="empty-state" id="emptyState" style="display:none;">검색/필터 조건에 맞는 사고 기록이 없습니다.</div>
+    </div>
+  </div>
+
+  <p class="privacy-note">
+    ※ 본 자료는 스캔된 사고보고서 원본을 사람이 옮겨 적은 것으로, 오탈자가 있을 수 있습니다. 보험 처리·법적 대응 등 중요한 판단 전에는 반드시 원본 서류를 대조하시기 바랍니다. 주민등록번호·전화번호 등 개인정보가 포함되어 있으므로 내부 관계자 외 공유를 자제해 주세요. 이 자료는 부서 공용 데이터베이스에 저장되어, 로그인한 모든 부서직원이 함께 조회·등록·수정할 수 있습니다.
+  </p>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="drawer" id="drawer"></div>
+</div>
+
+<div class="modal-overlay" id="registerOverlay">
+  <div class="modal-box">
+    <h2>새 사고 등록</h2>
+    <div class="sub">등록하면 부서 공용 데이터베이스에 저장되어 모든 부서직원 화면에 바로 반영됩니다. * 표시는 필수 항목입니다.</div>
+    <form id="registerForm">
+      <div class="form-error" id="formError"></div>
+      <div class="form-grid">
+        <div class="field-section-title">기본 정보</div>
+        <div class="field"><label>구분 *</label>
+          <select name="role" required>
+            <option value="가해">가해</option>
+            <option value="피해">피해</option>
+            <option value="쌍방">쌍방</option>
+          </select>
+        </div>
+        <div class="field"><label>소속 기사 *</label>
+          <input type="text" name="our_driver" list="driverList" required placeholder="예: 홍길동">
+          <datalist id="driverList"></datalist>
+        </div>
+        <div class="field"><label>사고 일자 *</label><input type="date" name="accident_date" required></div>
+        <div class="field"><label>사고 시각</label><input type="time" name="accident_time"></div>
+        <div class="field"><label>보고 일자</label><input type="date" name="report_date"></div>
+        <div class="field"><label>사고 장소 *</label><input type="text" name="location" required placeholder="예: 서산터미널"></div>
+
+        <div class="field-section-title">한양고속측 당사자</div>
+        <div class="field"><label>성명</label><input type="text" name="cp_name"></div>
+        <div class="field"><label>차량번호</label><input type="text" name="cp_vehicle" placeholder="예: 충남72아1234"></div>
+        <div class="field"><label>연락처</label><input type="tel" name="cp_phone" placeholder="010-0000-0000"></div>
+        <div class="field"><label>주민등록번호 (선택)</label><input type="text" name="cp_rrn" placeholder="예: 800101-1234567"></div>
+        <div class="field"><label>면허/자격번호</label><input type="text" name="cp_license"></div>
+
+        <div class="field-section-title">상대방</div>
+        <div class="field"><label>성명</label><input type="text" name="op_name" placeholder="미상이면 비워두세요"></div>
+        <div class="field"><label>소속/차종</label><input type="text" name="op_org" placeholder="예: 쏘나타, ㈜OO고속"></div>
+        <div class="field"><label>차량번호</label><input type="text" name="op_vehicle"></div>
+        <div class="field"><label>연락처</label><input type="tel" name="op_phone"></div>
+
+        <div class="field-section-title">사고 내용 및 처리</div>
+        <div class="field" style="grid-column:1/-1;"><label>사고 개요 *</label><textarea name="description" required placeholder="사고 경위를 육하원칙으로 입력하세요"></textarea></div>
+        <div class="field"><label>대물 피해내용</label><textarea name="damage_detail"></textarea></div>
+        <div class="field"><label>대인 피해내용</label><textarea name="injury_text" placeholder="예: 목 통증 호소(승객)"></textarea></div>
+        <div class="field" style="grid-column:1/-1;"><label>처리·정비 메모</label><textarea name="processing_note" placeholder="예: DB손해보험 접수번호 26-00000, 자체 종결 등"></textarea></div>
+
+        <div class="field-section-title">사고처리보고</div>
+        <div class="field"><label>사망 (명)</label><input type="number" name="cost_dead" min="0" step="1" placeholder="0"></div>
+        <div class="field"><label>중상 (명)</label><input type="number" name="cost_serious" min="0" step="1" placeholder="0"></div>
+        <div class="field"><label>경상 (명)</label><input type="number" name="cost_minor" min="0" step="1" placeholder="0"></div>
+        <div class="field"><label>보험수리비 (원)</label><input type="number" name="cost_insurance" min="0" step="1000" placeholder="0"></div>
+        <div class="field"><label>자차수리비 (원)</label><input type="number" name="cost_own" min="0" step="1000" placeholder="0"></div>
+        <div class="field"><label>기타 (사고자 의료비 등, 원)</label><input type="number" name="cost_other" min="0" step="1000" placeholder="0"></div>
+
+        <div class="field-section-title">포함 문서</div>
+        <div class="doc-check-row">
+          <label><input type="checkbox" name="doc" value="사고보고서" checked> 사고보고서</label>
+        </div>
+        <div class="doc-upload-row">
+          <label><input type="checkbox" name="doc" value="지급청구서"> 지급청구서</label>
+          <input type="file" accept="image/*,.pdf" class="doc-file-input" data-doc-file="지급청구서">
+        </div>
+        <div class="doc-upload-row">
+          <label><input type="checkbox" name="doc" value="개인기록카드"> 개인기록카드</label>
+          <input type="file" accept="image/*,.pdf" class="doc-file-input" data-doc-file="개인기록카드">
+        </div>
+        <div class="doc-upload-row">
+          <label><input type="checkbox" name="doc" value="등사지시서"> 등사지시서</label>
+          <input type="file" accept="image/*,.pdf" class="doc-file-input" data-doc-file="등사지시서">
+        </div>
+        <div class="doc-upload-hint">사진은 자동으로 압축되어 저장됩니다(파일당 약 3MB 이하 권장). 파일을 선택하면 해당 문서 체크박스가 자동으로 표시됩니다.</div>
+      </div>
+      <div class="modal-footer">
+        <button type="button" id="cancelRegister">취소</button>
+        <button type="button" class="primary" id="submitRegister">등록</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script>
+(function(){
+'use strict';
+
+// ---- Supabase 연결 설정 ----
+// anon(public) key는 브라우저에 노출되어도 되는 키입니다 — 실제 접근 제어는
+// Supabase의 Row Level Security 정책(로그인한 사용자만 읽기/쓰기 가능)이 담당합니다.
+const SUPABASE_URL = 'https://gjdarnnrfwaigpqcrluj.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdqZGFybm5yZndhaWdwcWNybHVqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODgyMjg4NTYsImV4cCI6MjEwMzgwNDg1Nn0.L4D7GpRX3VeMVVUxiJUk5JE26WBWR2AXfXk8LEs5uXo';
+// 부서 공용 로그인용 "가상 계정" 이메일. Supabase 대시보드 Authentication > Users에서
+// 정확히 이 이메일로 계정을 만들고(Auto Confirm 체크), 부서 공용 비밀번호를 설정하세요.
+const SHARED_LOGIN_EMAIL = 'cs-team@hanyang.local';
+const DOC_BUCKET = 'accident-docs';
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let DATA = [];
+let showPrivate = false;
+
+function showToast(msg, ms){
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), ms || 3200);
+}
+
+function maskRRN(rrn){
+  if(!rrn) return '—';
+  if(!showPrivate){
+    const p = rrn.split('-');
+    return p[0] ? (p[0] + '-●●●●●●●') : '●●●●●●-●●●●●●●';
+  }
+  return rrn;
+}
+function maskPhoneSimple(phone){
+  if(!phone) return '—';
+  if(showPrivate) return phone;
+  const parts = phone.split(/[\s/]+/)[0];
+  return parts.replace(/(\d{2,4})$/, m => '●'.repeat(m.length));
+}
+
+function formatWon(n){ return (n||0).toLocaleString('ko-KR') + '원'; }
+function formatCount(n){ return (n||0).toLocaleString('ko-KR') + '명'; }
+function costTotal(pr){ if(!pr) return 0; return (pr.insurance_repair||0)+(pr.own_repair||0)+(pr.other||0); }
+function casualtyTotal(pr){ if(!pr) return 0; return (pr.fatalities||0)+(pr.serious_injuries||0)+(pr.minor_injuries||0); }
+function casualtyCellHtml(rec){
+  const pr = rec.processing_report;
+  if(!pr || casualtyTotal(pr) <= 0) return `<span style="color:var(--text-muted)">—</span>`;
+  const parts = [];
+  if(pr.fatalities) parts.push(`<span style="color:var(--critical);font-weight:600;">사망 ${pr.fatalities}</span>`);
+  if(pr.serious_injuries) parts.push(`중상 ${pr.serious_injuries}`);
+  if(pr.minor_injuries) parts.push(`경상 ${pr.minor_injuries}`);
+  return parts.join(' · ');
+}
+function costBlockHtml(rec){
+  const pr = rec.processing_report;
+  if(!pr || (costTotal(pr) <= 0 && casualtyTotal(pr) <= 0)) return '';
+  return `<div class="block-title">사고처리보고 (인명피해·수리비)</div>
+    <div class="party-card">
+      <div class="kv"><span class="k">사망</span><span class="v">${formatCount(pr.fatalities)}</span></div>
+      <div class="kv"><span class="k">중상</span><span class="v">${formatCount(pr.serious_injuries)}</span></div>
+      <div class="kv"><span class="k">경상</span><span class="v">${formatCount(pr.minor_injuries)}</span></div>
+      <div class="kv"><span class="k">보험수리비</span><span class="v">${formatWon(pr.insurance_repair)}</span></div>
+      <div class="kv"><span class="k">자차수리비</span><span class="v">${formatWon(pr.own_repair)}</span></div>
+      <div class="kv"><span class="k">기타(사고자 의료비 등)</span><span class="v">${formatWon(pr.other)}</span></div>
+      <div class="kv"><span class="k"><strong>수리비 합계</strong></span><span class="v"><strong>${formatWon(costTotal(pr))}</strong></span></div>
+    </div>`;
+}
+function costBlockPrintHtml(rec){
+  const pr = rec.processing_report;
+  if(!pr || (costTotal(pr) <= 0 && casualtyTotal(pr) <= 0)) return '';
+  return `<div class="section-title">사고처리보고 (인명피해·수리비)</div>
+    <table>
+      <tr><th>사망</th><td>${formatCount(pr.fatalities)}</td></tr>
+      <tr><th>중상</th><td>${formatCount(pr.serious_injuries)}</td></tr>
+      <tr><th>경상</th><td>${formatCount(pr.minor_injuries)}</td></tr>
+      <tr><th>보험수리비</th><td>${formatWon(pr.insurance_repair)}</td></tr>
+      <tr><th>자차수리비</th><td>${formatWon(pr.own_repair)}</td></tr>
+      <tr><th>기타(사고자 의료비 등)</th><td>${formatWon(pr.other)}</td></tr>
+      <tr><th>수리비 합계</th><td><strong>${formatWon(costTotal(pr))}</strong></td></tr>
+    </table>`;
+}
+function classify(rec){
+  if(rec.status_override === '종결') return {key:'good', label:'자체 종결'};
+  if(rec.status_override === '진행중') return {key:'warning', label:'보험접수/협의중'};
+  const note = (rec.processing_note||'');
+  if(/뺑소니|도주|도망/.test(note)) return {key:'critical', label:'뺑소니 미해결'};
+  if(/종결|완결|청구 안|자체 종결/.test(note)) return {key:'good', label:'자체 종결'};
+  if(/손해보험|화재|공제|접수번호|해상/.test(note)) return {key:'warning', label:'보험접수/협의중'};
+  if(rec.role === '쌍방') return {key:'warning', label:'쌍방과실 협의중'};
+  return {key:'muted', label:'기록없음(접수)'};
+}
+
+function statusChip(rec){
+  const c = classify(rec);
+  return `<span class="status-chip status-${c.key}"><span class="dot" style="background:var(--${c.key === 'muted' ? 'text-muted' : c.key})"></span>${c.label}</span>`;
+}
+
+function getMonthCounts(){
+  const m = {}; for(let i=1;i<=12;i++) m[i]=0;
+  DATA.forEach(r => { const mm = parseInt(r.accident_date.split('-')[1], 10); m[mm] = (m[mm]||0)+1; });
+  return m;
+}
+function getRoleCounts(){
+  const r = {'가해':0,'피해':0,'쌍방':0};
+  DATA.forEach(x => r[x.role] = (r[x.role]||0) + 1);
+  return r;
+}
+function getStatusCounts(){
+  const s = {};
+  DATA.forEach(r => { const c = classify(r).key; s[c] = (s[c]||0)+1; });
+  return s;
+}
+function getDriverCounts(){
+  const d = {};
+  DATA.forEach(r => { d[r.our_driver] = (d[r.our_driver]||0) + 1; });
+  return d;
+}
+
+// ---- Supabase data layer ----
+async function loadData(){
+  const { data, error } = await sb
+    .from('accidents')
+    .select('*, accident_documents(*)')
+    .order('accident_date', { ascending: false });
+  if(error){
+    showToast('데이터를 불러오지 못했습니다: ' + error.message, 5000);
+    return;
+  }
+  DATA = (data || []).map(r => ({
+    ...r,
+    doc_files: Object.fromEntries((r.accident_documents || []).map(d => [
+      d.doc_type, { name: d.file_name, type: d.mime_type, storage_path: d.storage_path }
+    ])),
+  }));
+}
+
+// ---- stat tiles ----
+function renderStats(){
+  const roleCounts = getRoleCounts();
+  const injuryCount = DATA.filter(r => r.injury && Object.keys(r.injury).length>0).length;
+  const hitRunCount = DATA.filter(r => classify(r).key==='critical').length;
+  const mutualCount = roleCounts['쌍방']||0;
+  const stats = [
+    {num: DATA.length, lbl:'전체 사고 건수', cls:''},
+    {num: roleCounts['가해']||0, lbl:'가해 사고', cls:''},
+    {num: roleCounts['피해']||0, lbl:'피해 사고', cls:''},
+    {num: mutualCount, lbl:'쌍방과실', cls:''},
+    {num: injuryCount, lbl:'인명피해 동반', cls:'accent-critical'},
+    {num: hitRunCount, lbl:'뺑소니 미해결', cls:'accent-critical'},
+  ];
+  document.getElementById('statRow').innerHTML = stats.map(s => `
+    <div class="stat-tile ${s.cls}">
+      <div class="num">${s.num}</div>
+      <div class="lbl">${s.lbl}</div>
+    </div>`).join('');
+}
+
+function getProcessTotals(){
+  return DATA.reduce((acc, r) => {
+    const pr = r.processing_report || {};
+    acc.fatalities += pr.fatalities||0;
+    acc.serious += pr.serious_injuries||0;
+    acc.minor += pr.minor_injuries||0;
+    acc.insurance += pr.insurance_repair||0;
+    acc.own += pr.own_repair||0;
+    return acc;
+  }, {fatalities:0, serious:0, minor:0, insurance:0, own:0});
+}
+
+function renderProcessStats(){
+  const t = getProcessTotals();
+  const totalCasualties = t.fatalities + t.serious + t.minor;
+  const stats = [
+    {num: formatCount(totalCasualties), lbl:'인명피해 (누계)', cls: totalCasualties>0 ? 'accent-critical' : '', money:false},
+    {num: formatCount(t.fatalities), lbl:'사망', cls: t.fatalities>0 ? 'accent-critical' : '', money:false},
+    {num: formatCount(t.serious), lbl:'중상', cls:'', money:false},
+    {num: formatCount(t.minor), lbl:'경상', cls:'', money:false},
+    {num: formatWon(t.insurance), lbl:'보험수리비 (누계)', cls:'', money:true},
+    {num: formatWon(t.own), lbl:'자차수리비 (누계)', cls:'', money:true},
+  ];
+  document.getElementById('processStatRow').innerHTML = stats.map(s => `
+    <div class="stat-tile ${s.cls}">
+      <div class="num"${s.money ? ' style="font-size:17px;"' : ''}>${s.num}</div>
+      <div class="lbl">${s.lbl}</div>
+    </div>`).join('');
+}
+
+function renderMonthChart(){
+  const monthCounts = getMonthCounts();
+  const svg = document.getElementById('monthChart');
+  const W = 640, H = 190, padL = 24, padB = 26, padT = 10, padR=6;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+  const maxV = Math.max(...Object.values(monthCounts), 1);
+  const n = 12;
+  const bw = chartW/n * 0.6;
+  let svgContent = '';
+  const steps = 4;
+  for(let i=0;i<=steps;i++){
+    const y = padT + chartH - (chartH*i/steps);
+    const val = Math.round(maxV*i/steps);
+    svgContent += `<line class="gridline" x1="${padL}" x2="${W-padR}" y1="${y}" y2="${y}"/>`;
+    svgContent += `<text class="axis-label" x="${padL-6}" y="${y+3}" text-anchor="end">${val}</text>`;
+  }
+  for(let m=1;m<=12;m++){
+    const v = monthCounts[m];
+    const slotW = chartW/n;
+    const x = padL + slotW*(m-1) + (slotW-bw)/2;
+    const barH = chartH * (v/ (Math.ceil(maxV/steps)*steps || 1));
+    const y = padT + chartH - barH;
+    svgContent += `<rect class="mbar" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(barH,0).toFixed(1)}" rx="3">
+      <title>${m}월: 사고 ${v}건</title>
+    </rect>`;
+    if(v>0) svgContent += `<text class="mbar-label" x="${(x+bw/2).toFixed(1)}" y="${(y-4).toFixed(1)}">${v}</text>`;
+    svgContent += `<text class="axis-label" x="${(x+bw/2).toFixed(1)}" y="${H-8}" text-anchor="middle">${m}월</text>`;
+  }
+  svgContent += `<line class="baseline" x1="${padL}" x2="${W-padR}" y1="${padT+chartH}" y2="${padT+chartH}"/>`;
+  svg.innerHTML = svgContent;
+}
+
+function renderRoleBars(){
+  const roleCounts = getRoleCounts();
+  const el = document.getElementById('roleBars');
+  const total = DATA.length || 1;
+  const rows = [
+    {label:'가해', val: roleCounts['가해']||0, color:'var(--series-1)'},
+    {label:'피해', val: roleCounts['피해']||0, color:'var(--series-2)'},
+    {label:'쌍방', val: roleCounts['쌍방']||0, color:'var(--series-3)'},
+  ];
+  el.innerHTML = rows.map(r => `
+    <div class="bar-row">
+      <div class="rlabel">${r.label}</div>
+      <div class="track"><div class="fill" style="width:${(r.val/total*100).toFixed(1)}%; background:${r.color}"></div></div>
+      <div class="val">${r.val}</div>
+    </div>`).join('');
+}
+
+function renderStatusBars(){
+  const statusCounts = getStatusCounts();
+  const el = document.getElementById('statusBars');
+  const total = DATA.length || 1;
+  const order = [
+    {key:'good', label:'자체 종결', color:'var(--good)'},
+    {key:'warning', label:'보험접수/협의중', color:'var(--warning)'},
+    {key:'critical', label:'뺑소니 미해결', color:'var(--critical)'},
+    {key:'muted', label:'기록없음', color:'var(--text-muted)'},
+  ];
+  el.innerHTML = order.map(o => {
+    const v = statusCounts[o.key]||0;
+    return `<div class="bar-row">
+      <div class="rlabel">${o.label}</div>
+      <div class="track"><div class="fill" style="width:${(v/total*100).toFixed(1)}%; background:${o.color}"></div></div>
+      <div class="val">${v}</div>
+    </div>`;
+  }).join('');
+}
+
+let activeDriver = null;
+function renderDriverGrid(){
+  const driverCounts = getDriverCounts();
+  const el = document.getElementById('driverGrid');
+  const names = Object.keys(driverCounts).sort((a,b)=> driverCounts[b]-driverCounts[a]);
+  el.innerHTML = names.map(n => {
+    const recs = DATA.filter(r=>r.our_driver===n);
+    const g = recs.filter(r=>r.role==='가해').length;
+    const p = recs.filter(r=>r.role==='피해').length;
+    const s = recs.filter(r=>r.role==='쌍방').length;
+    const meta = [g?`가해 ${g}`:null, p?`피해 ${p}`:null, s?`쌍방 ${s}`:null].filter(Boolean).join(' · ');
+    return `<div class="driver-card ${activeDriver===n?'active':''}" data-driver="${n}">
+      <div class="dname">${n}</div>
+      <div class="dmeta">총 ${driverCounts[n]}건 · ${meta}</div>
+    </div>`;
+  }).join('');
+  el.querySelectorAll('.driver-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const d = card.getAttribute('data-driver');
+      activeDriver = (activeDriver === d) ? null : d;
+      document.getElementById('searchInput').value = activeDriver || '';
+      renderDriverGrid();
+      applyFilters();
+    });
+  });
+}
+
+function fillMonthFilter(){
+  const monthCounts = getMonthCounts();
+  const sel = document.getElementById('monthFilter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">전체 월</option>';
+  for(let m=1;m<=12;m++){
+    if(monthCounts[m]>0){
+      const opt = document.createElement('option');
+      opt.value = String(m);
+      opt.textContent = m + '월';
+      sel.appendChild(opt);
+    }
+  }
+  sel.value = cur;
+}
+
+function fillDriverList(){
+  const driverCounts = getDriverCounts();
+  const dl = document.getElementById('driverList');
+  dl.innerHTML = Object.keys(driverCounts).sort().map(n=>`<option value="${n}">`).join('');
+}
+
+let sortKey = 'accident_date';
+let sortDir = -1; // desc by default (latest first)
+
+function applyFilters(){
+  const q = document.getElementById('searchInput').value.trim().toLowerCase();
+  const role = document.getElementById('roleFilter').value;
+  const status = document.getElementById('statusFilter').value;
+  const month = document.getElementById('monthFilter').value;
+
+  let rows = DATA.filter(r => {
+    if(role && r.role !== role) return false;
+    if(status && classify(r).key !== status) return false;
+    if(month && parseInt(r.accident_date.split('-')[1],10) !== parseInt(month,10)) return false;
+    if(q){
+      const hay = [
+        r.our_driver, r.location, r.other_party?.name, r.other_party?.org,
+        r.company_party?.vehicle, r.other_party?.vehicle, r.description
+      ].join(' ').toLowerCase();
+      if(!hay.includes(q)) return false;
+    }
+    return true;
+  });
+
+  rows.sort((a,b) => {
+    let av = a[sortKey], bv = b[sortKey];
+    if(sortKey==='accident_date'){ av = a.accident_date+(a.accident_time||''); bv = b.accident_date+(b.accident_time||''); }
+    const natural = av < bv ? -1 : (av > bv ? 1 : 0);
+    return sortDir * natural;
+  });
+
+  renderTable(rows);
+}
+
+function renderTable(rows){
+  const tbody = document.getElementById('tableBody');
+  const empty = document.getElementById('emptyState');
+  document.getElementById('resultCount').textContent = `${rows.length}건 표시 중 (전체 ${DATA.length}건)`;
+  if(rows.length === 0){
+    tbody.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+  tbody.innerHTML = rows.map(r => {
+    const other = r.other_party || {};
+    const otherLabel = [other.name, other.org].filter(Boolean).join(' / ') || '미상';
+    return `<tr data-id="${r.id}">
+      <td class="mono">${r.accident_date}<br><span style="color:var(--text-muted)">${r.accident_time||''}</span></td>
+      <td>${r.our_driver}</td>
+      <td><span class="role-chip role-${r.role}">${r.role}</span></td>
+      <td class="loc">${r.location||'—'}</td>
+      <td class="desc-preview">${otherLabel}</td>
+      <td class="mono">${casualtyCellHtml(r)}</td>
+      <td>${statusChip(r)}</td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('tr').forEach(tr => {
+    tr.addEventListener('click', () => openDetail(parseInt(tr.getAttribute('data-id'),10)));
+  });
+}
+
+function renderAll(){
+  renderStats();
+  renderProcessStats();
+  renderMonthChart();
+  renderRoleBars();
+  renderStatusBars();
+  renderDriverGrid();
+  fillMonthFilter();
+  fillDriverList();
+  applyFilters();
+}
+
+document.getElementById('searchInput').addEventListener('input', applyFilters);
+document.getElementById('roleFilter').addEventListener('change', applyFilters);
+document.getElementById('statusFilter').addEventListener('change', applyFilters);
+document.getElementById('monthFilter').addEventListener('change', applyFilters);
+document.getElementById('resetFilters').addEventListener('click', () => {
+  document.getElementById('searchInput').value='';
+  document.getElementById('roleFilter').value='';
+  document.getElementById('statusFilter').value='';
+  document.getElementById('monthFilter').value='';
+  activeDriver = null;
+  renderDriverGrid();
+  applyFilters();
+});
+
+document.querySelectorAll('thead th[data-key]').forEach(th => {
+  th.addEventListener('click', () => {
+    const key = th.getAttribute('data-key');
+    if(sortKey === key) sortDir *= -1; else { sortKey = key; sortDir = -1; }
+    applyFilters();
+  });
+});
+
+// ---- detail drawer ----
+function processingViewHtml(r){
+  return `
+    <div class="block-title">처리·정비 메모</div>
+    <div class="note-box">${r.processing_note || '별도 처리 메모가 기록되어 있지 않습니다 (사고보고서만 접수된 상태로 추정).'}</div>
+    ${costBlockHtml(r)}
+  `;
+}
+function processingEditHtml(r){
+  const pr = r.processing_report || {};
+  return `
+    <div class="block-title">처리 현황 수정</div>
+    <div class="party-card" style="display:flex;flex-direction:column;gap:10px;">
+      <div class="field"><label>처리상태</label>
+        <select id="editStatusSelect">
+          <option value="" ${!r.status_override?'selected':''}>자동 감지 (메모 문구 기반)</option>
+          <option value="종결" ${r.status_override==='종결'?'selected':''}>종결</option>
+          <option value="진행중" ${r.status_override==='진행중'?'selected':''}>진행중</option>
+        </select>
+      </div>
+      <div class="field"><label>처리·정비 메모</label><textarea id="editNoteText">${r.processing_note||''}</textarea></div>
+      <div class="field"><label>사망 (명)</label><input type="number" id="editDead" min="0" step="1" value="${pr.fatalities||0}"></div>
+      <div class="field"><label>중상 (명)</label><input type="number" id="editSerious" min="0" step="1" value="${pr.serious_injuries||0}"></div>
+      <div class="field"><label>경상 (명)</label><input type="number" id="editMinor" min="0" step="1" value="${pr.minor_injuries||0}"></div>
+      <div class="field"><label>보험수리비 (원)</label><input type="number" id="editCostInsurance" min="0" step="1000" value="${pr.insurance_repair||0}"></div>
+      <div class="field"><label>자차수리비 (원)</label><input type="number" id="editCostOwn" min="0" step="1000" value="${pr.own_repair||0}"></div>
+      <div class="field"><label>기타 (사고자 의료비 등, 원)</label><input type="number" id="editCostOther" min="0" step="1000" value="${pr.other||0}"></div>
+      <div style="display:flex;justify-content:flex-end;gap:8px;">
+        <button type="button" id="cancelEditStatus">취소</button>
+        <button type="button" class="primary" id="saveEditStatus">저장</button>
+      </div>
+    </div>
+  `;
+}
+
+// Docs with an attached file render as a clickable tag that opens a signed,
+// time-limited preview URL fetched from Supabase Storage on demand (files
+// live in a private bucket, so nothing is embedded in the page itself).
+function docTagsHtml(r){
+  const files = r.doc_files || {};
+  return (r.docs||[]).map(d=>{
+    return files[d]
+      ? `<button type="button" class="doc-tag-file" data-doc="${d}">${d}</button>`
+      : `<span class="doc-tag">${d}</span>`;
+  }).join('');
+}
+
+function wireDocPreviewButtons(r){
+  const area = document.getElementById('docPreviewArea');
+  document.querySelectorAll('#drawer .doc-tag-file').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const docType = btn.dataset.doc;
+      const f = (r.doc_files||{})[docType];
+      if(!f){ area.innerHTML=''; delete area.dataset.doc; return; }
+      if(area.dataset.doc === docType){
+        area.innerHTML = '';
+        delete area.dataset.doc;
+        return;
+      }
+      area.dataset.doc = docType;
+      const nameLine = `<div class="doc-preview-name">${docType} · ${f.name||''} <button type="button" class="doc-print-btn" data-doc="${docType}" title="이 문서만 새 탭에서 열어 인쇄">🖨 이 문서 인쇄</button></div>`;
+      area.innerHTML = `<div class="doc-preview">${nameLine}<div style="font-size:12px;color:var(--text-muted);">불러오는 중...</div></div>`;
+      const { data, error } = await sb.storage.from(DOC_BUCKET).createSignedUrl(f.storage_path, 3600);
+      if(error || !data){
+        area.innerHTML = `<div class="doc-preview">${nameLine}<div style="font-size:12px;color:var(--critical);">파일을 불러오지 못했습니다: ${error ? error.message : '알 수 없는 오류'}</div></div>`;
+        return;
+      }
+      const url = data.signedUrl;
+      if(f.type && f.type.startsWith('image/')){
+        area.innerHTML = `<div class="doc-preview">${nameLine}<img src="${url}" alt="${docType}"></div>`;
+      } else if(f.type === 'application/pdf'){
+        area.innerHTML = `<div class="doc-preview">${nameLine}<embed src="${url}" type="application/pdf" width="100%" height="480"></div>`;
+      } else {
+        area.innerHTML = `<div class="doc-preview">${nameLine}<div style="font-size:12px;color:var(--text-muted);">이 파일 형식은 미리보기를 지원하지 않습니다.</div></div>`;
+      }
+      const printBtn = area.querySelector('.doc-print-btn');
+      if(printBtn){
+        printBtn.addEventListener('click', async (ev) => {
+          ev.stopPropagation();
+          // Open the tab synchronously (in direct response to this click) so
+          // popup blockers don't intercept it, then fill in the real URL once
+          // the (async) signed-URL fetch resolves. PDFs embedded in our own
+          // print job come out blank in most browsers (see the print CSS note
+          // above), so printing each attached file from its own tab -- via the
+          // browser's native PDF/image viewer -- is the reliable path.
+          const w = window.open('', '_blank');
+          if(w) w.location = url; else showToast('팝업이 차단되었습니다. 브라우저의 팝업 차단 해제 후 다시 시도해 주세요.');
+        });
+      }
+    });
+  });
+}
+
+function openDetail(id){
+  const r = DATA.find(x => x.id === id);
+  if(!r) return;
+  const cp = r.company_party || {};
+  const op = r.other_party || {};
+  const injuryRows = Object.entries(r.injury||{}).map(([k,v])=>`<div class="kv"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+
+  document.getElementById('drawer').innerHTML = `
+    <div class="drawer-actions">
+      <button id="editStatusToggle" title="처리 현황 수정">✏️ 처리 현황 수정</button>
+      <button id="printOne">🖨 인쇄</button>
+      <button id="closeDrawer">닫기 ✕</button>
+    </div>
+    <h2>${r.location || '사고'} <span class="role-chip role-${r.role}" style="margin-left:6px;">${r.role}</span></h2>
+    <div class="sub">${r.accident_date} ${r.accident_time||''} · 보고일 ${r.report_date||'—'} · 소속기사: ${r.our_driver}</div>
+    <div style="margin-bottom:14px;">${statusChip(r)}</div>
+
+    <div class="field-grid">
+      <div class="party-card">
+        <h3>한양고속측 당사자</h3>
+        <div class="kv"><span class="k">성명</span><span class="v">${cp.name||'—'}</span></div>
+        <div class="kv"><span class="k">차량번호</span><span class="v">${cp.vehicle||'—'}</span></div>
+        <div class="kv"><span class="k">연락처</span><span class="v">${maskPhoneSimple(cp.phone)}</span></div>
+        <div class="kv"><span class="k">주민등록번호</span><span class="v">${maskRRN(cp.rrn)}</span></div>
+        <div class="kv"><span class="k">면허/자격번호</span><span class="v">${cp.license||'—'}</span></div>
+      </div>
+      <div class="party-card">
+        <h3>상대방</h3>
+        <div class="kv"><span class="k">성명/구분</span><span class="v">${op.name||'미상'}</span></div>
+        <div class="kv"><span class="k">소속/차종</span><span class="v">${op.org||'—'}</span></div>
+        <div class="kv"><span class="k">차량번호</span><span class="v">${op.vehicle||'—'}</span></div>
+        <div class="kv"><span class="k">연락처</span><span class="v">${maskPhoneSimple(op.phone)}</span></div>
+      </div>
+    </div>
+
+    <div class="block-title">사고 개요</div>
+    <div class="desc-box">${r.description || '기록 없음'}</div>
+
+    ${(r.damage_detail) ? `<div class="block-title">대물 피해내용</div><div class="desc-box">${r.damage_detail}</div>` : ''}
+    ${(Object.keys(r.injury||{}).length>0) ? `<div class="block-title">대인 피해</div><div class="party-card">${injuryRows}</div>` : ''}
+
+    <div id="processingSection">${processingViewHtml(r)}</div>
+
+    <div class="block-title">포함 문서</div>
+    <div>${docTagsHtml(r)}</div>
+    <div id="docPreviewArea"></div>
+
+    <div class="privacy-note">원본 파일명: ${r.original_file||'(등록 시 원본 파일 없음)'}</div>
+  `;
+  document.getElementById('closeDrawer').addEventListener('click', closeDetail);
+  document.getElementById('printOne').addEventListener('click', () => printRecord(r));
+  wireDocPreviewButtons(r);
+
+  document.getElementById('editStatusToggle').addEventListener('click', () => {
+    document.getElementById('processingSection').innerHTML = processingEditHtml(r);
+    document.getElementById('cancelEditStatus').addEventListener('click', () => {
+      document.getElementById('processingSection').innerHTML = processingViewHtml(r);
+    });
+    document.getElementById('saveEditStatus').addEventListener('click', async () => {
+      const saveBtn = document.getElementById('saveEditStatus');
+      saveBtn.disabled = true;
+      saveBtn.textContent = '저장 중...';
+      const update = {
+        status_override: document.getElementById('editStatusSelect').value || null,
+        processing_note: document.getElementById('editNoteText').value.trim(),
+        processing_report: {
+          fatalities: Number(document.getElementById('editDead').value) || 0,
+          serious_injuries: Number(document.getElementById('editSerious').value) || 0,
+          minor_injuries: Number(document.getElementById('editMinor').value) || 0,
+          insurance_repair: Number(document.getElementById('editCostInsurance').value) || 0,
+          own_repair: Number(document.getElementById('editCostOwn').value) || 0,
+          other: Number(document.getElementById('editCostOther').value) || 0,
+        },
+      };
+      const { error } = await sb.from('accidents').update(update).eq('id', r.id);
+      if(error){
+        showToast('저장하지 못했습니다: ' + error.message, 5000);
+        saveBtn.disabled = false;
+        saveBtn.textContent = '저장';
+        return;
+      }
+      await loadData();
+      renderAll();
+      openDetail(id);
+    });
+  });
+  document.getElementById('overlay').classList.add('open');
+}
+function closeDetail(){ document.getElementById('overlay').classList.remove('open'); }
+document.getElementById('overlay').addEventListener('click', (e) => {
+  if(e.target.id === 'overlay') closeDetail();
+});
+
+// ---- privacy toggle ----
+document.getElementById('privacyToggle').addEventListener('click', function(){
+  showPrivate = !showPrivate;
+  this.textContent = showPrivate ? '🔓 개인정보 표시 중 (클릭하여 가리기)' : '🔒 개인정보 가리기';
+  this.classList.toggle('toggled', showPrivate);
+  applyFilters();
+});
+
+// ---- print ----
+// Recreates the layout of the original 교통사고발생보고서 paper form (가해자/피해자
+// info blocks, 사고일시, 대인·대물 grid, 사고개요, 사고현장약도) so the printed page
+// reads like the uploaded document. Anything the dashboard adds on top (처리 현황,
+// 수리비 등) is appended below as a clearly separate system-record section.
+function koreanDate(iso){
+  const parts = (iso||'').split('-');
+  if(parts.length !== 3) return iso||'';
+  return `${parts[0]} 년 ${Number(parts[1])}월  ${Number(parts[2])}일`;
+}
+function koreanTime(hhmm){
+  const parts = (hhmm||'').split(':');
+  if(parts.length !== 2) return hhmm||'';
+  return `${Number(parts[0])}시 ${Number(parts[1])}분`;
+}
+
+// Closes the detail drawer's 문서 미리보기 (document preview) panel. Kept as
+// general UI hygiene -- it's still a bit odd to leave a PDF/image preview open
+// behind a print popup -- but it is NOT what protects printing from the PDF
+// viewer hijack bug anymore; openPrintWindow() below is what does that.
+function closeDocPreview(){
+  const area = document.getElementById('docPreviewArea');
+  if(area){ area.innerHTML = ''; delete area.dataset.doc; }
+}
+
+// Styles for the standalone popup window that print jobs are rendered into
+// (see openPrintWindow). Kept separate from the main page's <style> block
+// since this popup never loads any of the app's other CSS.
+const PRINT_STYLES = `
+  body { margin:0; padding:20px; color:#000; background:#fff; font:14px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .print-doc h1 { font-size:16px; margin:0 0 4px; }
+  .print-doc .meta { font-size:12px; color:#333; margin-bottom:12px; }
+  .print-doc table { width:100%; border-collapse:collapse; font-size:11px; }
+  .print-doc th, .print-doc td { border:1px solid #999; padding:5px 7px; text-align:left; }
+  .print-doc .section-title { font-size:12.5px; font-weight:600; margin:14px 0 4px; }
+  .print-doc .box { border:1px solid #999; padding:8px 10px; font-size:12px; white-space:pre-wrap; }
+
+  /* Reproduces the layout of the uploaded 교통사고발생보고서 paper form */
+  .orig-form{border:2px solid #000;max-width:720px;margin:0 auto;}
+  .orig-row{border-bottom:1px solid #000;padding:7px 12px;font-size:13.5px;}
+  .orig-row:last-child{border-bottom:none;}
+  .orig-title{font-size:22px;font-weight:700;text-align:center;letter-spacing:.15em;padding:14px 12px 10px;}
+  .orig-date{font-size:15px;font-weight:700;text-align:center;padding-bottom:12px;letter-spacing:.05em;}
+  .orig-addr{font-weight:600;}
+  .orig-fields{display:flex;flex-wrap:wrap;gap:0 28px;font-weight:600;}
+  .orig-section{text-align:center;font-weight:700;letter-spacing:.3em;background:#fafafa;}
+  .orig-grid{margin:0;width:100%;border-collapse:collapse;}
+  .orig-grid td{border:1px solid #000;font-size:12.5px;padding:6px 8px;}
+  .orig-grid td.lbl{background:#f5f5f5;font-weight:600;width:15%;text-align:center;white-space:nowrap;}
+  .orig-desc{padding:14px 14px 40px;font-size:13px;line-height:1.7;white-space:pre-wrap;border-bottom:1px solid #000;min-height:70px;}
+  .orig-sketch{min-height:130px;}
+  /* break-inside:avoid keeps this box on one page instead of splitting, which
+     previously stranded its last line ("※ 첨부된 개별 문서...") alone on the
+     next page. */
+  .orig-appendix{max-width:720px;margin:20px auto 0;border:1px solid #999;border-radius:6px;padding:12px 16px;background:#fafaf8;break-inside:avoid;page-break-inside:avoid;}
+  .orig-appendix-title{font-weight:700;font-size:12.5px;margin-bottom:8px;color:#333;}
+  @media print { @page { margin: 12mm; } }
+`;
+
+// Renders bodyHtml in a brand-new, blank popup window and prints that window
+// instead of this one. This is the actual fix for the "blank pages" bug: once
+// this page's own window has ever loaded a PDF into the document-preview
+// <embed> (문서 미리보기), some browsers' built-in PDF viewer can hijack that
+// window's print pipeline for the rest of its lifetime and leak the PDF's own
+// page count into every later print job, no matter what gets removed from the
+// DOM first. A freshly-opened window has never loaded a PDF, so it starts
+// clean every time. The window is opened synchronously (before any awaited
+// work) so popup blockers treat it as a direct result of the click.
+function openPrintWindow(title, bodyHtml){
+  const w = window.open('', '_blank', 'width=860,height=1000');
+  if(!w){
+    showToast('팝업이 차단되었습니다. 브라우저의 팝업 차단 해제 후 다시 시도해 주세요.');
+    return;
+  }
+  w.document.open();
+  w.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>${title}</title><style>${PRINT_STYLES}</style></head><body>${bodyHtml}</body></html>`);
+  w.document.close();
+  let printed = false;
+  const doPrint = () => { if(printed) return; printed = true; try{ w.focus(); w.print(); }catch(e){} };
+  w.addEventListener('load', doPrint, { once:true });
+  setTimeout(doPrint, 400); // fallback in case 'load' already fired before the listener was attached
+}
+
+function printRecord(r){
+  closeDocPreview();
+  const cp = r.company_party || {};
+  const op = r.other_party || {};
+  let party1, party2, label1, label2, aff1, aff2;
+  if(r.role === '피해'){
+    party1 = op; party2 = cp; label1 = '가해자'; label2 = '피해자';
+    aff1 = op.org || op.vehicle || ''; aff2 = '㈜한양고속';
+  } else if(r.role === '쌍방'){
+    party1 = cp; party2 = op; label1 = '당사자(한양고속측)'; label2 = '상대방';
+    aff1 = '㈜한양고속'; aff2 = op.org || op.vehicle || '';
+  } else {
+    party1 = cp; party2 = op; label1 = '가해자'; label2 = '피해자';
+    aff1 = '㈜한양고속'; aff2 = op.org || op.vehicle || '';
+  }
+  const rrn1 = (party1 === cp) ? maskRRN(cp.rrn) : '';
+  const rrn2 = (party2 === cp) ? maskRRN(cp.rrn) : '';
+  const license1 = (party1 === cp) ? (cp.license||'') : '';
+  const license2 = (party2 === cp) ? (cp.license||'') : '';
+  const injuryText = Object.entries(r.injury||{}).map(([k,v])=>`${k}: ${v}`).join(' / ');
+
+  const bodyHtml = `
+    <div class="orig-form">
+      <div class="orig-row orig-title">교통사고발생보고서</div>
+      <div class="orig-row orig-date">${koreanDate(r.report_date || r.accident_date)}</div>
+      <div class="orig-row orig-addr">${label1}주소 : ${aff1}</div>
+      <div class="orig-row orig-fields"><span>성&nbsp;&nbsp;명 : ${party1.name||'미상'}</span><span>전화번호 : ${party1.phone||''}</span></div>
+      <div class="orig-row orig-fields"><span>차량번호 : ${party1.vehicle||''}</span><span>주민등록번호 : ${rrn1}</span><span>면허번호 : ${license1}</span></div>
+      <div class="orig-row orig-addr">${label2}주소 : ${aff2}</div>
+      <div class="orig-row orig-fields"><span>성&nbsp;&nbsp;명 : ${party2.name||'미상'}</span><span>전화번호 : ${party2.phone||''}</span></div>
+      <div class="orig-row orig-fields"><span>차량번호 : ${party2.vehicle||''}</span><span>주민등록번호 : ${rrn2}</span><span>면허번호 : ${license2}</span></div>
+      <div class="orig-row orig-addr">사고일시 : ${koreanDate(r.accident_date)} ${koreanTime(r.accident_time)}경 ${r.location||''}</div>
+
+      <div class="orig-row orig-section">사 고 내 용</div>
+      <table class="orig-grid">
+        <tr><td class="lbl" colspan="2" style="text-align:center;">대 인(피해, 가해)</td><td class="lbl" colspan="2" style="text-align:center;">대 물(피해)</td></tr>
+        <tr><td class="lbl">병 원 명</td><td></td><td class="lbl">피해내용</td><td>${r.damage_detail||''}</td></tr>
+        <tr><td class="lbl">진단일수</td><td></td><td class="lbl">수리공장</td><td>${r.repair_shop||''}</td></tr>
+        <tr><td class="lbl">상해구분</td><td>${injuryText}</td><td class="lbl">차&nbsp;&nbsp;종</td><td></td></tr>
+        <tr><td class="lbl">장해급별</td><td></td><td class="lbl">년&nbsp;&nbsp;식</td><td></td></tr>
+        <tr><td class="lbl">과실상계</td><td></td><td class="lbl">과실상계</td><td></td></tr>
+      </table>
+
+      <div class="orig-row orig-section">사 고 개 요</div>
+      <div class="orig-desc">${r.description||''}</div>
+
+      <div class="orig-row orig-section">사 고 현 장 약 도</div>
+      <div class="orig-row orig-sketch"></div>
+    </div>
+
+    <div class="orig-appendix">
+      <div class="orig-appendix-title">◆ 처리 현황 (한양고속 차량안전팀 시스템 기록 · 원본 서식에는 없는 항목)</div>
+      <div style="font-size:12.5px;line-height:1.6;white-space:pre-wrap;">${r.processing_note || '별도 처리 메모가 기록되어 있지 않습니다.'}</div>
+      ${costBlockPrintHtml(r)}
+      <div style="margin-top:10px;font-size:11px;color:#666;">포함 문서: ${(r.docs||[]).join(', ') || '—'} · 원본 파일명: ${r.original_file||'(직접 등록)'}</div>
+      <div style="margin-top:4px;font-size:11px;color:#999;">※ 첨부된 개별 문서(지급청구서/개인기록카드/등사지시서 등)는 이 인쇄물에 포함되지 않습니다. 상세보기의 문서 미리보기에서 "🖨 이 문서 인쇄" 버튼으로 각각 인쇄해 주세요.</div>
+    </div>`;
+  openPrintWindow('교통사고발생보고서', bodyHtml);
+}
+
+document.getElementById('printListBtn').addEventListener('click', () => {
+  closeDocPreview();
+  const rows = Array.from(document.querySelectorAll('#tableBody tr')).map(tr => tr.cloneNode(true));
+  rows.forEach(tr => tr.removeAttribute('data-id'));
+  const tableHtml = `<table><thead><tr><th>날짜</th><th>기사</th><th>구분</th><th>사고 장소</th><th>상대방</th><th>인명피해</th><th>상태</th></tr></thead><tbody>${rows.map(r=>r.outerHTML).join('')}</tbody></table>`
+    .replace(/<button[^>]*>.*?<\/button>/g, '');
+  const bodyHtml = `
+    <div class="print-doc">
+      <h1>한양고속 차량안전팀 · 사고 목록</h1>
+      <div class="meta">인쇄일: ${new Date().toLocaleDateString('ko-KR')} &nbsp;|&nbsp; ${document.getElementById('resultCount').textContent}</div>
+      ${tableHtml}
+    </div>`;
+  openPrintWindow('사고 목록', bodyHtml);
+});
+
+// ---- register form ----
+const registerOverlay = document.getElementById('registerOverlay');
+document.getElementById('registerBtn').addEventListener('click', () => {
+  document.getElementById('registerForm').reset();
+  document.getElementById('formError').classList.remove('show');
+  registerOverlay.classList.add('open');
+});
+document.getElementById('cancelRegister').addEventListener('click', () => registerOverlay.classList.remove('open'));
+registerOverlay.addEventListener('click', (e) => { if(e.target === registerOverlay) registerOverlay.classList.remove('open'); });
+
+// Choosing a file auto-checks that document's checkbox so the two stay in sync.
+document.querySelectorAll('.doc-file-input').forEach(inp => {
+  inp.addEventListener('change', () => {
+    if(inp.files && inp.files[0]){
+      const cb = document.querySelector(`input[name="doc"][value="${inp.dataset.docFile}"]`);
+      if(cb) cb.checked = true;
+    }
+  });
+});
+
+// Uploaded documents go to a private Supabase Storage bucket (not embedded in
+// the page) — images are downscaled/recompressed client-side before upload to
+// save space and bandwidth; other files are capped at ~3MB.
+const DOC_FILE_MAX_BYTES = 3 * 1024 * 1024;
+function compressImageFile(file, maxDim, quality){
+  return new Promise((resolve, reject) => {
+    const objUrl = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      let w = img.width, h = img.height;
+      if(w > maxDim || h > maxDim){
+        const scale = maxDim / Math.max(w, h);
+        w = Math.round(w * scale);
+        h = Math.round(h * scale);
+      }
+      const canvas = document.createElement('canvas');
+      canvas.width = w;
+      canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => {
+        URL.revokeObjectURL(objUrl);
+        if(!blob){ reject(new Error('이미지를 처리하지 못했습니다.')); return; }
+        resolve(blob);
+      }, 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(objUrl); reject(new Error('이미지를 불러오지 못했습니다.')); };
+    img.src = objUrl;
+  });
+}
+async function processDocFile(file){
+  if(file.type.startsWith('image/')){
+    return { blob: await compressImageFile(file, 1600, 0.75), type: 'image/jpeg' };
+  }
+  if(file.size > DOC_FILE_MAX_BYTES){
+    throw new Error('파일 용량이 너무 큽니다 (3MB 이하 파일만 첨부할 수 있습니다).');
+  }
+  return { blob: file, type: file.type || 'application/octet-stream' };
+}
+async function collectDocFiles(){
+  const result = {};
+  for(const inp of document.querySelectorAll('.doc-file-input')){
+    const file = inp.files && inp.files[0];
+    if(!file) continue;
+    const processed = await processDocFile(file);
+    result[inp.dataset.docFile] = { name: file.name, type: processed.type, blob: processed.blob };
+  }
+  return result;
+}
+function sanitizeFileName(name){
+  return String(name||'file').replace(/[^\w.\-]/g, '_');
+}
+
+document.getElementById('submitRegister').addEventListener('click', async function(e){
+  const fd = new FormData(document.getElementById('registerForm'));
+  const get = k => (fd.get(k)||'').toString().trim();
+  const errEl = document.getElementById('formError');
+
+  const role = get('role'), our_driver = get('our_driver'), accident_date = get('accident_date'),
+        location = get('location'), description = get('description');
+  if(!role || !our_driver || !accident_date || !location || !description){
+    errEl.textContent = '필수 항목(*)을 모두 입력해 주세요.';
+    errEl.classList.add('show');
+    return;
+  }
+  errEl.classList.remove('show');
+
+  const docs = fd.getAll('doc').map(String);
+  const injuryText = get('injury_text');
+
+  const submitBtn = document.getElementById('submitRegister');
+  submitBtn.disabled = true;
+  submitBtn.textContent = '파일 처리 중...';
+
+  let docFiles;
+  try{
+    docFiles = await collectDocFiles();
+  } catch(err){
+    errEl.textContent = err && err.message ? err.message : '첨부 파일을 처리하지 못했습니다.';
+    errEl.classList.add('show');
+    submitBtn.disabled = false;
+    submitBtn.textContent = '등록';
+    return;
+  }
+
+  submitBtn.textContent = '저장 중...';
+
+  const record = {
+    role, report_date: get('report_date') || accident_date,
+    accident_date, accident_time: get('accident_time') || null,
+    location,
+    our_driver,
+    company_party: {
+      name: get('cp_name'), phone: get('cp_phone'), vehicle: get('cp_vehicle'),
+      rrn: get('cp_rrn'), license: get('cp_license')
+    },
+    other_party: {
+      name: get('op_name'), phone: get('op_phone'), vehicle: get('op_vehicle'), org: get('op_org')
+    },
+    description,
+    damage_detail: get('damage_detail') || null,
+    injury: injuryText ? {'상해내용': injuryText} : {},
+    processing_note: get('processing_note') || null,
+    processing_report: {
+      fatalities: Number(get('cost_dead')) || 0,
+      serious_injuries: Number(get('cost_serious')) || 0,
+      minor_injuries: Number(get('cost_minor')) || 0,
+      insurance_repair: Number(get('cost_insurance')) || 0,
+      own_repair: Number(get('cost_own')) || 0,
+      other: Number(get('cost_other')) || 0,
+    },
+    docs,
+  };
+
+  const { data: inserted, error: insErr } = await sb.from('accidents').insert(record).select().single();
+  if(insErr){
+    errEl.textContent = '등록에 실패했습니다: ' + insErr.message;
+    errEl.classList.add('show');
+    submitBtn.disabled = false;
+    submitBtn.textContent = '등록';
+    return;
+  }
+
+  const accidentId = inserted.id;
+  const uploadErrors = [];
+  for(const [docType, f] of Object.entries(docFiles)){
+    const path = `${accidentId}/${docType}_${Date.now()}_${sanitizeFileName(f.name)}`;
+    const { error: upErr } = await sb.storage.from(DOC_BUCKET).upload(path, f.blob, { contentType: f.type });
+    if(upErr){ uploadErrors.push(`${docType}: ${upErr.message}`); continue; }
+    const { error: docErr } = await sb.from('accident_documents').insert({
+      accident_id: accidentId, doc_type: docType, storage_path: path, file_name: f.name, mime_type: f.type,
+    });
+    if(docErr) uploadErrors.push(`${docType}: ${docErr.message}`);
+  }
+
+  await loadData();
+  renderAll();
+  registerOverlay.classList.remove('open');
+  submitBtn.disabled = false;
+  submitBtn.textContent = '등록';
+
+  if(uploadErrors.length){
+    showToast('사고는 등록되었으나 일부 첨부파일 저장에 실패했습니다: ' + uploadErrors.join(' / '), 6000);
+  } else {
+    showToast('등록되었습니다.');
+  }
+});
+
+// ---- auth ----
+async function doLogin(password){
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  const loginBtn = document.getElementById('loginSubmit');
+  loginBtn.disabled = true;
+  loginBtn.textContent = '확인 중...';
+  const { error } = await sb.auth.signInWithPassword({ email: SHARED_LOGIN_EMAIL, password });
+  loginBtn.disabled = false;
+  loginBtn.textContent = '입장';
+  if(error){
+    errEl.textContent = '비밀번호가 올바르지 않습니다.';
+    return false;
+  }
+  return true;
+}
+
+async function enterApp(){
+  document.getElementById('loginScreen').style.display = 'none';
+  document.getElementById('appRoot').style.display = '';
+  await loadData();
+  renderAll();
+}
+
+document.getElementById('loginSubmit').addEventListener('click', async () => {
+  const pw = document.getElementById('loginPassword').value;
+  if(!pw) return;
+  const ok = await doLogin(pw);
+  if(ok) await enterApp();
+});
+document.getElementById('loginPassword').addEventListener('keydown', (e) => {
+  if(e.key === 'Enter') document.getElementById('loginSubmit').click();
+});
+document.getElementById('logoutBtn').addEventListener('click', async () => {
+  await sb.auth.signOut();
+  document.getElementById('appRoot').style.display = 'none';
+  document.getElementById('loginScreen').style.display = '';
+  document.getElementById('loginPassword').value = '';
+});
+
+// ---- boot: reuse an existing session if the browser already logged in ----
+(async function boot(){
+  const { data: { session } } = await sb.auth.getSession();
+  if(session){
+    await enterApp();
+  }
+})();
+
+})();
+</script>
+</body>
+</html>

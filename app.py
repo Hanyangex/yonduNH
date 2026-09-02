@@ -10,7 +10,7 @@ import os
 DATA_FILE = "saved_bus_data.csv"
 TABLE_NAME = "vehicle_data"
 REQUIRED_COLUMNS = ["차량번호", "차종", "담당 노선", "취득가액", "최초등록일", "차령만료일", "정기검사유효일자"]
-OPTIONAL_COLUMNS = ["연식", "예비차투입현황"]  # 있으면 함께 저장/표시되는 선택 항목 (예비차량 현황판에서 사용)
+OPTIONAL_COLUMNS = ["예비차투입현황"]  # 있으면 함께 저장/표시되는 선택 항목 (예비차량 현황판에서 사용). 연식은 항상 최초등록일에서 자동 계산되므로 저장 대상이 아님
 RESERVE_ROUTE_LABEL = "예비차량"  # '담당 노선'에 이 값이 들어간 차량을 예비차량으로 인식
 
 # 0-1. Supabase 연동 (업로드한 차량 데이터를 서버(Supabase DB)에 영구 등록)
@@ -23,7 +23,6 @@ DB_COLUMN_MAP = {
     "최초등록일": "first_registered_at",
     "차령만료일": "age_expiry_date",
     "정기검사유효일자": "inspection_valid_date",
-    "연식": "model_year",
     "예비차투입현황": "reserve_status",
 }
 DB_COLUMN_MAP_REV = {v: k for k, v in DB_COLUMN_MAP.items()}
@@ -104,6 +103,73 @@ def save_to_supabase(client, df):
     client.table(TABLE_NAME).delete().gte("id", 0).execute()
     if records:
         client.table(TABLE_NAME).insert(records).execute()
+
+
+def update_reserve_status(client, vehicle_no, status):
+    """특정 차량 한 대의 예비차투입현황만 갱신한다 (전체 삭제/재등록 없이)."""
+    client.table(TABLE_NAME).update({"reserve_status": status}).eq("vehicle_no", vehicle_no).execute()
+
+
+def build_reserve_excel(df):
+    """예비차량 현황판을 보기 좋게 꾸민 엑셀 파일(bytes)로 만든다."""
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    buffer = io.BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
+        df.to_excel(writer, index=False, sheet_name="예비차량현황", startrow=2)
+        ws = writer.sheets["예비차량현황"]
+
+        n_cols = len(df.columns)
+        last_col = get_column_letter(n_cols)
+
+        # 제목
+        ws.merge_cells(f"A1:{last_col}1")
+        title_cell = ws["A1"]
+        title_cell.value = "🅿️ 예비차량 현황판"
+        title_cell.font = Font(size=16, bold=True, color="FFFFFF")
+        title_cell.fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+        title_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[1].height = 30
+
+        # 부제 (기준일/대수)
+        ws.merge_cells(f"A2:{last_col}2")
+        sub_cell = ws["A2"]
+        sub_cell.value = f"기준일: {datetime.now().strftime('%Y-%m-%d')}    |    총 {len(df)}대"
+        sub_cell.font = Font(size=10, italic=True, color="595959")
+        sub_cell.fill = PatternFill(start_color="EAF1F8", end_color="EAF1F8", fill_type="solid")
+        sub_cell.alignment = Alignment(horizontal="center", vertical="center")
+        ws.row_dimensions[2].height = 20
+
+        thin = Side(style="thin", color="B7B7B7")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        header_row = 3
+
+        for col_idx in range(1, n_cols + 1):
+            cell = ws.cell(row=header_row, column=col_idx)
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill(start_color="2E75B6", end_color="2E75B6", fill_type="solid")
+            cell.alignment = Alignment(horizontal="center", vertical="center")
+            cell.border = border
+        ws.row_dimensions[header_row].height = 22
+
+        band_fill = PatternFill(start_color="F2F7FC", end_color="F2F7FC", fill_type="solid")
+        for r in range(header_row + 1, header_row + 1 + len(df)):
+            for c in range(1, n_cols + 1):
+                cell = ws.cell(row=r, column=c)
+                cell.border = border
+                cell.alignment = Alignment(horizontal="center" if c < n_cols else "left", vertical="center")
+                if (r - header_row) % 2 == 0:
+                    cell.fill = band_fill
+
+        for col_idx, col_name in enumerate(df.columns, start=1):
+            max_len = max([len(str(col_name))] + [len(str(v)) for v in df.iloc[:, col_idx - 1]]) if len(df) else len(str(col_name))
+            ws.column_dimensions[get_column_letter(col_idx)].width = max(12, max_len + 6)
+
+        ws.freeze_panes = ws.cell(row=header_row + 1, column=1)
+        ws.sheet_view.showGridLines = False
+
+    return buffer.getvalue()
 
 
 # 1. 페이지 기본 설정
@@ -280,9 +346,7 @@ with col_up2:
         "취득가액": [200000000, 210000000, 190000000, 185000000],
         "최초등록일": ["2016-05-10", "2021-03-15", "2024-02-01", "2019-07-01"],
         "차령만료일": ["2026-05-10", "2031-03-15", "2034-02-01", "2029-07-01"],
-        "정기검사유효일자": ["2026-09-01", "2026-10-15", "2027-03-20", "2026-12-05"],
-        "연식": ["2016년식", "2021년식", "2024년식", "2019년식"],
-        "예비차투입현황": ["", "", "", "대기중"]
+        "정기검사유효일자": ["2026-09-01", "2026-10-15", "2027-03-20", "2026-12-05"]
     })
     sample_buffer = io.BytesIO()
     with pd.ExcelWriter(sample_buffer, engine='openpyxl') as writer:
@@ -472,39 +536,73 @@ st.markdown("---")
 # 7. 예비차량 현황판
 # ==========================================
 st.subheader("🅿️ 4. 예비차량 현황판")
-st.caption("담당 노선이 '예비차량'으로 등록된 차량만 모아서 보여줍니다. (엑셀의 '담당 노선' 칸에 '예비차량'이라고 입력하면 자동으로 여기에 표시됩니다)")
+st.caption("담당 노선이 '예비차량'으로 등록된 차량만 모아서 보여줍니다. 연식은 최초등록일 기준으로 자동 계산되며, 예비차투입현황은 아래 표에서 바로 입력하고 저장할 수 있습니다.")
 
 reserve_df = bus_data[bus_data["담당 노선"].astype(str).str.strip() == RESERVE_ROUTE_LABEL].copy()
 
 if reserve_df.empty:
-    st.info("현재 '예비차량'으로 등록된 차량이 없습니다.")
+    st.info("현재 '예비차량'으로 등록된 차량이 없습니다. 엑셀의 '담당 노선' 칸에 '예비차량'이라고 입력해서 업로드하면 여기에 표시됩니다.")
 else:
-    # 연식: 업로드 파일에 '연식' 컬럼이 있으면 그 값을, 없거나 비어있으면 최초등록일 기준 연도로 자동 표시
-    fallback_year = pd.to_datetime(reserve_df["최초등록일"]).dt.year.astype(str) + "년식"
-    if "연식" in reserve_df.columns:
-        reserve_df["연식"] = reserve_df["연식"].astype(str).str.strip()
-        reserve_df.loc[reserve_df["연식"].isin(["", "nan", "None"]), "연식"] = fallback_year
-    else:
-        reserve_df["연식"] = fallback_year
+    # 연식: 항상 최초등록일 기준 연도로 자동 계산 (업로드/입력 대상이 아님)
+    reserve_df["연식"] = pd.to_datetime(reserve_df["최초등록일"]).dt.year.astype(str) + "년식"
 
-    # 예비차투입현황: 업로드 파일에 해당 컬럼이 있으면 그 값을, 없으면 안내 문구를 표시
+    # 예비차투입현황: 저장된 값이 있으면 표시, 없으면 기본값 '대기중' (아래 표에서 직접 수정 가능)
     if "예비차투입현황" in reserve_df.columns:
         reserve_df["예비차투입현황"] = reserve_df["예비차투입현황"].astype(str).str.strip()
-        reserve_df.loc[reserve_df["예비차투입현황"].isin(["", "nan", "None"]), "예비차투입현황"] = "대기중"
     else:
-        reserve_df["예비차투입현황"] = "대기중 (엑셀에 '예비차투입현황' 컬럼을 추가하면 상세 현황이 표시됩니다)"
+        reserve_df["예비차투입현황"] = ""
+    reserve_df.loc[reserve_df["예비차투입현황"].isin(["", "nan", "None"]), "예비차투입현황"] = "대기중"
 
     reserve_show_cols = ["차량번호", "연식", "예비차투입현황"]
-    st.dataframe(reserve_df[reserve_show_cols], use_container_width=True, hide_index=True)
-    st.caption(f"총 {len(reserve_df)}대의 예비차량이 등록되어 있습니다.")
+    reserve_edit_base = reserve_df[reserve_show_cols].reset_index(drop=True)
 
-    reserve_buffer = io.BytesIO()
-    with pd.ExcelWriter(reserve_buffer, engine='openpyxl') as writer:
-        reserve_df[reserve_show_cols].to_excel(writer, index=False, sheet_name="예비차량현황")
+    edited_reserve_df = st.data_editor(
+        reserve_edit_base,
+        use_container_width=True,
+        hide_index=True,
+        num_rows="fixed",
+        disabled=["차량번호", "연식"],
+        column_config={
+            "예비차투입현황": st.column_config.TextColumn(
+                "예비차투입현황",
+                help="예비차량의 현재 투입 상태를 입력하세요 (예: 대기중, 서울-부산 임시투입 등)",
+            )
+        },
+        key="reserve_status_editor",
+    )
+
+    save_col, count_col = st.columns([1, 3])
+    with save_col:
+        save_clicked = st.button("💾 예비차투입현황 저장")
+    with count_col:
+        st.caption(f"총 {len(reserve_df)}대의 예비차량이 등록되어 있습니다.")
+
+    if save_clicked:
+        if supabase_client is not None:
+            try:
+                changed = 0
+                for _, row in edited_reserve_df.iterrows():
+                    before = reserve_edit_base.loc[
+                        reserve_edit_base["차량번호"] == row["차량번호"], "예비차투입현황"
+                    ]
+                    if not before.empty and row["예비차투입현황"] != before.values[0]:
+                        update_reserve_status(supabase_client, row["차량번호"], row["예비차투입현황"])
+                        changed += 1
+                if changed:
+                    st.success(f"{changed}건의 예비차투입현황이 저장되었습니다.")
+                    st.rerun()
+                else:
+                    st.info("변경된 내용이 없습니다.")
+            except Exception as e:
+                st.error(f"저장 중 오류가 발생했습니다: {e}")
+        else:
+            st.warning("Supabase 서버가 연결되어 있지 않아 지금 입력한 내용은 저장되지 않고, 새로고침하면 사라집니다.")
+
+    reserve_excel_bytes = build_reserve_excel(edited_reserve_df)
     st.download_button(
         label="🖨️ 예비차량 현황판 출력용 엑셀 다운로드",
-        data=reserve_buffer.getvalue(),
+        data=reserve_excel_bytes,
         file_name=f"예비차량_현황판_{datetime.now().strftime('%Y%m%d')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="reserve_download"
+        key="reserve_download",
     )

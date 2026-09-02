@@ -6,8 +6,48 @@ from datetime import datetime
 import io
 import os
 
-# 0. 데이터 저장 파일 경로 설정
+# 0. 데이터 저장 파일 경로 설정 (Google Sheets 연결 실패 시 임시 대체용)
 DATA_FILE = "saved_bus_data.csv"
+WORKSHEET_NAME = "차량데이터"
+REQUIRED_COLUMNS = ["차량번호", "차종", "담당 노선", "취득가액", "최초등록일", "차령만료일", "정기검사유효일자"]
+
+# 0-1. Google Sheets 연동 (업로드한 차량 데이터를 서버(구글시트)에 영구 등록)
+try:
+    from streamlit_gsheets import GSheetsConnection
+    GSHEETS_LIB_AVAILABLE = True
+except ImportError:
+    GSHEETS_LIB_AVAILABLE = False
+
+
+@st.cache_resource(show_spinner=False)
+def _get_gsheets_connection():
+    return st.connection("gsheets", type=GSheetsConnection)
+
+
+def get_gsheets_connection():
+    """secrets.toml(또는 Streamlit Cloud Secrets)에 연결 정보가 있으면 연결 객체를,
+    없거나 설정이 잘못되었으면 None을 반환한다."""
+    if not GSHEETS_LIB_AVAILABLE:
+        return None
+    try:
+        return _get_gsheets_connection()
+    except Exception:
+        return None
+
+
+def load_from_gsheets(conn):
+    """시트에서 저장된 차량 데이터를 읽어온다. 실패 시 (None, 오류메시지)를 반환한다."""
+    try:
+        df = conn.read(worksheet=WORKSHEET_NAME, ttl=0)
+        df = df.dropna(how="all")
+        return (None if df.empty else df), None
+    except Exception as e:
+        return None, str(e)
+
+
+def save_to_gsheets(conn, df):
+    conn.update(worksheet=WORKSHEET_NAME, data=df)
+
 
 # 1. 페이지 기본 설정
 st.set_page_config(
@@ -23,6 +63,21 @@ st.markdown("---")
 # ==========================================
 # 1. 사이드바 - 설정 및 데이터 관리
 # ==========================================
+gsheets_conn = get_gsheets_connection()
+
+st.sidebar.header("🔗 서버(Google Sheets) 연결 상태")
+if gsheets_conn is not None:
+    st.sidebar.success("✅ Google Sheets 서버에 연결되었습니다.\n업로드한 차량 데이터가 시트에 자동 등록됩니다.")
+else:
+    st.sidebar.warning(
+        "⚠️ Google Sheets 서버에 연결되어 있지 않습니다.\n"
+        "지금은 이 서버 인스턴스에만 임시로 데이터가 저장되며, 재배포 시 사라질 수 있습니다.\n\n"
+        "secrets.toml(또는 Streamlit Cloud의 Secrets 설정)에 연결 정보를 등록하면 "
+        "업로드 데이터가 Google Sheets에 영구 등록됩니다. "
+        "자세한 방법은 GOOGLE_SHEETS_설정가이드.md 를 참고하세요."
+    )
+
+st.sidebar.markdown("---")
 st.sidebar.header("⚙️ 차령 및 감가상각 설정")
 age_warning_days = st.sidebar.number_input("차령만료 임박 기준 (일)", min_value=30, max_value=365, value=180)
 
@@ -38,6 +93,11 @@ st.sidebar.markdown("---")
 if st.sidebar.button("🔄 저장된 데이터 초기화"):
     if os.path.exists(DATA_FILE):
         os.remove(DATA_FILE)
+    if gsheets_conn is not None:
+        try:
+            save_to_gsheets(gsheets_conn, pd.DataFrame(columns=REQUIRED_COLUMNS))
+        except Exception as e:
+            st.sidebar.error(f"Google Sheets 초기화 중 오류가 발생했습니다: {e}")
     if "bus_data" in st.session_state:
         del st.session_state["bus_data"]
     st.sidebar.success("저장된 데이터가 삭제되고 기본값으로 초기화되었습니다.")
@@ -178,7 +238,7 @@ with col_up2:
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
 
-# 1) 파일 업로드 발생 시 저장
+# 1) 파일 업로드 발생 시 저장 (Google Sheets 서버 등록 우선, 실패 시 로컬 임시 저장)
 if uploaded_file is not None:
     try:
         if uploaded_file.name.endswith(".csv"):
@@ -190,14 +250,28 @@ if uploaded_file is not None:
         if err_msg:
             st.error(err_msg)
         else:
-            raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
-            st.success(f"총 {len(raw_df)}대의 차량 데이터가 성공적으로 저장되었습니다!")
+            if gsheets_conn is not None:
+                try:
+                    save_to_gsheets(gsheets_conn, raw_df)
+                    st.success(f"총 {len(raw_df)}대의 차량 데이터가 Google Sheets 서버에 등록되었습니다!")
+                except Exception as e:
+                    raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
+                    st.error(f"Google Sheets 등록 중 오류가 발생하여 로컬에 임시 저장했습니다: {e}")
+            else:
+                raw_df.to_csv(DATA_FILE, index=False, encoding="utf-8-sig")
+                st.warning("Google Sheets 서버가 연결되어 있지 않아 로컬에만 임시 저장되었습니다. (앱 재배포 시 유실될 수 있음)")
     except Exception as e:
         st.error(f"파일 처리 중 오류가 발생했습니다: {e}")
 
-# 2) 저장된 데이터를 불러오거나 기본 데이터 로드
-if os.path.exists(DATA_FILE):
+# 2) 저장된 데이터를 불러오거나 기본 데이터 로드 (Google Sheets 우선 → 로컬 임시파일 → 기본 샘플)
+current_raw_df = None
+if gsheets_conn is not None:
+    current_raw_df, _load_err = load_from_gsheets(gsheets_conn)
+
+if current_raw_df is None and os.path.exists(DATA_FILE):
     current_raw_df = pd.read_csv(DATA_FILE)
+
+if current_raw_df is not None:
     bus_data, _ = calculate_bus_asset(current_raw_df, age_warning_days, depreciation_method, useful_life, salvage_rate)
 else:
     bus_data, _ = calculate_bus_asset(default_bus_df, age_warning_days, depreciation_method, useful_life, salvage_rate)

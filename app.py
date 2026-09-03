@@ -107,7 +107,9 @@ def save_to_supabase(client, df):
 
 def update_reserve_status(client, vehicle_no, status):
     """특정 차량 한 대의 예비차투입현황만 갱신한다 (전체 삭제/재등록 없이)."""
-    client.table(TABLE_NAME).update({"reserve_status": status}).eq("vehicle_no", vehicle_no).execute()
+    if status is None or (isinstance(status, float) and pd.isna(status)):
+        status = ""
+    client.table(TABLE_NAME).update({"reserve_status": str(status)}).eq("vehicle_no", vehicle_no).execute()
 
 
 def build_reserve_excel(df):
@@ -538,7 +540,7 @@ st.markdown("---")
 st.subheader("🅿️ 4. 예비차량 현황판")
 st.caption("담당 노선이 '예비차량'으로 등록된 차량만 모아서 보여줍니다. 연식은 최초등록일 기준으로 자동 계산되며, 예비차투입현황은 아래 표에서 바로 입력하고 저장할 수 있습니다.")
 
-reserve_df = bus_data[bus_data["담당 노선"].astype(str).str.strip() == RESERVE_ROUTE_LABEL].copy()
+reserve_df = bus_data[bus_data["담당 노선"].fillna("").astype(str).str.strip() == RESERVE_ROUTE_LABEL].copy()
 
 if reserve_df.empty:
     st.info("현재 '예비차량'으로 등록된 차량이 없습니다. 엑셀의 '담당 노선' 칸에 '예비차량'이라고 입력해서 업로드하면 여기에 표시됩니다.")
@@ -547,8 +549,11 @@ else:
     reserve_df["연식"] = pd.to_datetime(reserve_df["최초등록일"]).dt.year.astype(str) + "년식"
 
     # 예비차투입현황: 저장된 값이 있으면 표시, 없으면 기본값 '대기중' (아래 표에서 직접 수정 가능)
+    # fillna("")를 astype(str)보다 먼저 적용해야 한다 — pandas에서 None/NaN에 astype(str)만 적용하면
+    # 문자열 "nan"이 아니라 실수형 NaN이 그대로 남는 경우가 있어, 이후 Supabase 저장 시
+    # "Out of range float values are not JSON compliant: nan" 오류의 원인이 된다.
     if "예비차투입현황" in reserve_df.columns:
-        reserve_df["예비차투입현황"] = reserve_df["예비차투입현황"].astype(str).str.strip()
+        reserve_df["예비차투입현황"] = reserve_df["예비차투입현황"].fillna("").astype(str).str.strip()
     else:
         reserve_df["예비차투입현황"] = ""
     reserve_df.loc[reserve_df["예비차투입현황"].isin(["", "nan", "None"]), "예비차투입현황"] = "대기중"
@@ -582,11 +587,15 @@ else:
             try:
                 changed = 0
                 for _, row in edited_reserve_df.iterrows():
+                    new_val = row["예비차투입현황"]
+                    if new_val is None or (isinstance(new_val, float) and pd.isna(new_val)):
+                        new_val = ""
+                    new_val = str(new_val).strip() or "대기중"
                     before = reserve_edit_base.loc[
                         reserve_edit_base["차량번호"] == row["차량번호"], "예비차투입현황"
                     ]
-                    if not before.empty and row["예비차투입현황"] != before.values[0]:
-                        update_reserve_status(supabase_client, row["차량번호"], row["예비차투입현황"])
+                    if not before.empty and new_val != before.values[0]:
+                        update_reserve_status(supabase_client, row["차량번호"], new_val)
                         changed += 1
                 if changed:
                     st.success(f"{changed}건의 예비차투입현황이 저장되었습니다.")
